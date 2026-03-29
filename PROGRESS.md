@@ -1,9 +1,9 @@
 # PROGRESS — Adopt Me Farming Ecosystem
-Last updated: 2026-03-23
+Last updated: 2026-03-29
 
 ---
 
-## Status: Pre-Development — Siap mulai Phase 1
+## Status: Phase 0 Selesai — Hopper v1.4 siap di-test di RF
 
 ---
 
@@ -79,9 +79,9 @@ Last updated: 2026-03-23
 - Menu: package, cookie, PS, hop interval, debug
 - Cookie persist + format nick:pass:cookie
 
-### Belum Confirmed ⚠️
-- Cookie inject ke RobloxSharedPreferences.xml
-  → debug di chat terpisah
+### Patch 4 (2026-03-29) — Belum di-test ⏳
+- Cookie inject: preserve XML existing + restorecon SELinux fix
+  → dijadwalkan test besok di RF
 
 ---
 
@@ -106,7 +106,7 @@ GET  /api/store/commission  (25%)
 
 ## Blockers Aktif
 
-1. Cookie inject Roblox → debug chat terpisah
+1. ~~Cookie inject Roblox~~ → Patch 4 sudah dibuat, **test besok di RF**
 2. JWT localStorage key → cek F12 Console starpets.gg
 3. Reprice + remove → HTTP Toolkit session lagi
 
@@ -114,10 +114,11 @@ GET  /api/store/commission  (25%)
 
 ## Next Actions
 ```
-1. [RF]  Debug cookie inject via menu Debug hopper v1.4
-2. [PC]  Cek localStorage JWT starpets.gg
-3. [PC]  Capture reprice + remove di HTTP Toolkit
-4. [PC]  Install Cursor + Node.js v20 + Git
-5. [PC]  Setup folder project + semua .md + .cursorrules
-6. [PC]  Mulai Phase 1
+1. [RF]   Test hopper v1.4 cookie inject:
+          curl -L "https://raw.githubusercontent.com/Fluxyyy333/AdoptMeAgent/main/Hopper/hopper.lua" -o ~/hopper.lua
+          lua ~/hopper.lua
+          → Verify: log "Cookie injected" + cek Roblox login
+2. [RF]   Kalau cookie OK → konfirmasi, lanjut Phase 1 backend
+3. [PC]   Cek localStorage JWT starpets.gg
+4. [PC]   Capture reprice + remove di HTTP Toolkit
 ```
