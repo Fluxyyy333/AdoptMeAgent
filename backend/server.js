@@ -8,7 +8,7 @@ app.use(express.json());
 app.use("/api/devices",  require("./routes/devices"));
 app.use("/api/ps",       require("./routes/ps"));
 app.use("/api/cookies",  require("./routes/cookies"));
-app.use("/api/config",   require("./routes/config"));
+app.use("/api/settings", require("./routes/settings"));
 
 // Mark devices offline if not seen for >2 minutes
 setInterval(() => {

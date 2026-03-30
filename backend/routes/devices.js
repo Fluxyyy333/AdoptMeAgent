@@ -67,9 +67,9 @@ router.post("/:id/status", (req, res) => {
   const updates = ["last_seen=?"];
   const vals = [Date.now()];
 
-  if (status)   { updates.push("status=?");   vals.push(status); }
-  if (hop_min != null) { updates.push("hop_min=?");  vals.push(hop_min); }
-  if (pkg_name) { updates.push("pkg_name=?"); vals.push(pkg_name); }
+  if (status)        { updates.push("status=?");   vals.push(status); }
+  if (hop_min != null) { updates.push("hop_min=?"); vals.push(hop_min); }
+  if (pkg_name)      { updates.push("pkg_name=?"); vals.push(pkg_name); }
 
   vals.push(id);
   db.prepare(`UPDATE devices SET ${updates.join(",")} WHERE id=?`).run(...vals);

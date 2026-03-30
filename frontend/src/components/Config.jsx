@@ -2,55 +2,125 @@ import { useState, useEffect } from "react";
 import { get, put } from "../api";
 
 export default function Config() {
-  const [username, setUsername] = useState("");
-  const [saved, setSaved]       = useState("");
+  const [settings, setSettings] = useState({
+    pkg_name: "",
+    hop_interval: 50,
+    endpoint_ps: "",
+    endpoint_interval: 30,
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    get("/config").then((cfg) => {
-      setUsername(cfg.potion_handler_username || "");
-      setSaved(cfg.potion_handler_username || "");
+    get("/settings").then((cfg) => {
+      setSettings({
+        pkg_name: cfg.pkg_name || "",
+        hop_interval: cfg.hop_interval ?? 50,
+        endpoint_ps: cfg.endpoint_ps || "",
+        endpoint_interval: cfg.endpoint_interval ?? 30,
+      });
     });
   }, []);
 
+  function update(key, value) {
+    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSaved(false);
+  }
+
   async function save() {
-    await put("/config", { potion_handler_username: username });
-    setSaved(username);
-    alert("Saved.");
+    setSaving(true);
+    await put("/settings", settings);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
   }
 
   return (
     <div>
-      <div className="card">
-        <h2>Age Up Config</h2>
-        <div className="field">
-          <label>Potion Handler Username (Roblox)</label>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="YourRobloxUsername"
-          />
-          <div className="dim" style={{ marginTop: 4 }}>
-            Username akun yang kamu pakai untuk age up di emulator. Digunakan sebagai whitelist auto-trade dari Collector.
-          </div>
+      <div className="row-between">
+        <div className="page-header">
+          <h2>Config</h2>
+          <p>Global settings for all devices</p>
         </div>
-        {saved && (
-          <div style={{ marginBottom: 12, color: "#4ade80", fontSize: 13 }}>
-            Saved: {saved}
-          </div>
-        )}
-        <button className="btn-primary" onClick={save}>Save</button>
+        <button className="btn-primary" onClick={save} disabled={saving}>
+          {saving ? "Saving..." : saved ? "Saved!" : "Save"}
+        </button>
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h2>About</h2>
-        <table>
-          <tbody>
-            <tr><td className="dim">Backend</td><td>Node.js + Express + SQLite</td></tr>
-            <tr><td className="dim">Frontend</td><td>React + Vite</td></tr>
-            <tr><td className="dim">Hopper</td><td>Lua v1.4.3 (Termux)</td></tr>
-            <tr><td className="dim">Version</td><td>Phase 1 MVP</td></tr>
-          </tbody>
-        </table>
+      {/* Hopper Settings */}
+      <div className="card">
+        <div className="card-title">Hopper</div>
+
+        <div className="settings-row">
+          <div className="settings-label">
+            <h4>Package Name</h4>
+            <p>Android package name for the Roblox app</p>
+          </div>
+          <div className="settings-input">
+            <input
+              value={settings.pkg_name}
+              onChange={(e) => update("pkg_name", e.target.value)}
+              placeholder="com.roblox.client"
+            />
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-label">
+            <h4>Hop Interval</h4>
+            <p>Minutes between server hops</p>
+          </div>
+          <div className="settings-input">
+            <div className="input-with-unit">
+              <input
+                type="number"
+                min={0}
+                value={settings.hop_interval}
+                onChange={(e) => update("hop_interval", parseInt(e.target.value) || 0)}
+                style={{ width: 100 }}
+              />
+              <span className="unit">min</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* End Point Settings */}
+      <div className="card">
+        <div className="card-title">End Point PS Link</div>
+
+        <div className="settings-row">
+          <div className="settings-label">
+            <h4>End Point PS Link</h4>
+            <p>PS link where all devices gather after hopping (pabrik besar)</p>
+          </div>
+          <div className="settings-input" style={{ width: 350 }}>
+            <input
+              value={settings.endpoint_ps}
+              onChange={(e) => update("endpoint_ps", e.target.value)}
+              placeholder="https://www.roblox.com/games/...?privateServerLinkCode=..."
+            />
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <div className="settings-label">
+            <h4>End Point Interval</h4>
+            <p>Minutes to stay at end point before next cycle</p>
+          </div>
+          <div className="settings-input">
+            <div className="input-with-unit">
+              <input
+                type="number"
+                min={1}
+                value={settings.endpoint_interval}
+                onChange={(e) => update("endpoint_interval", parseInt(e.target.value) || 1)}
+                style={{ width: 100 }}
+              />
+              <span className="unit">min</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
