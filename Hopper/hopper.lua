@@ -3,6 +3,7 @@
 -- Patch 2: Fixed bash/tty hang -> background sh reader (fixes P2 crash)
 -- Patch 3: Crash watchdog no longer resets hop timer (fixes infinite dead-link loop)
 -- Patch 4: Cookie inject: preserve existing XML keys + restorecon SELinux fix
+-- Patch 5: Clear WebView cookie store so Roblox reads from shared_prefs
 -- ============================================
 
 local HOPPER_LOG  = "/sdcard/hopper_log.txt"
@@ -167,6 +168,9 @@ local function inject_cookie()
     if not f then log("ERR: gagal tulis cookie tmp"); return end
     f:write(xml_content)
     f:close()
+
+    -- Hapus WebView cookie store agar Roblox baca dari shared_prefs
+    su_exec("rm -rf /data/data/" .. PKG .. "/app_webview/Default/Cookies*")
 
     su_exec("mkdir -p '" .. dir .. "'")
     su_exec("cp '" .. tmp .. "' '" .. target .. "'")
