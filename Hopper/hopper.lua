@@ -1,23 +1,18 @@
--- Simple PS Hopper v1.4.3
--- Patch 1: Cache-only clear before each launch (fixes crash on server switch)
--- Patch 2: Fixed bash/tty hang -> background sh reader (fixes P2 crash)
--- Patch 3: Crash watchdog no longer resets hop timer (fixes infinite dead-link loop)
--- Patch 4: Cookie inject: preserve existing XML keys + restorecon SELinux fix
--- Patch 5: Update WebView cookie store via sqlite3 full path (replace value, not delete)
--- v1.4.2: UI/QOL polish — \r\n fix, cookie inject+account info, hop persist,
---         Ctrl+C stop, PS resume, progress feedback
--- v1.4.3: Fix io.popen→temp file (fixes dead input after inject),
---         Fix Ctrl+C detection via isleep (Lua 5.1+5.3 compat)
+-- Simple PS Hopper v1.5
+-- v1.4.x: standalone Termux hopper with menu, cookie inject, PS management
+-- v1.5:   Web backend integration — register, poll commands, report status
 -- ============================================
 
-local HOPPER_LOG   = "/sdcard/hopper_log.txt"
-local PS_FILE      = "/sdcard/private_servers.txt"
-local PKG_FILE     = "/sdcard/.hopper_pkg"
-local COOKIE_FILE  = "/sdcard/.hopper_cookie"
-local STOP_FILE    = "/sdcard/.hopper_stop"
-local ACCOUNT_FILE = "/sdcard/.hopper_account"
-local HOP_FILE     = "/sdcard/.hopper_hop"
-local PTR_FILE     = "/sdcard/.hopper_ptr"
+local HOPPER_LOG     = "/sdcard/hopper_log.txt"
+local PS_FILE        = "/sdcard/private_servers.txt"
+local PKG_FILE       = "/sdcard/.hopper_pkg"
+local COOKIE_FILE    = "/sdcard/.hopper_cookie"
+local STOP_FILE      = "/sdcard/.hopper_stop"
+local ACCOUNT_FILE   = "/sdcard/.hopper_account"
+local HOP_FILE       = "/sdcard/.hopper_hop"
+local PTR_FILE       = "/sdcard/.hopper_ptr"
+local DEVICE_ID_FILE = "/sdcard/.hopper_device_id"
+local SERVER_FILE    = "/sdcard/.hopper_server"
 
 local RONIX_KEY_DIR  = "/storage/emulated/0/RonixExploit/internal/"
 local RONIX_KEY_PATH = RONIX_KEY_DIR .. "_key.txt"
@@ -31,8 +26,10 @@ loadstring(game:HttpGet("https://zekehub.com/scripts/AdoptMe/Utility.lua"))()]]
 local RONIX_TRACK_PATH   = RONIX_AE_DIR .. "Trackstat.lua"
 local RONIX_TRACK_SCRIPT = '_G.Config={UserID="37825915-c3be-41bc-987f-661da09d9b3c",discord_id="757533465213141053",Note="Pc"}local s;for i=1,5 do s=pcall(function()loadstring(game:HttpGet("https://cdn.yummydata.click/scripts/adoptmee"))()end)if s then break end wait(5)end'
 
-local PKG     = ""
-local HOP_MIN = 0
+local PKG       = ""
+local HOP_MIN   = 0
+local DEVICE_ID = ""
+local SERVER    = ""
 
 -- ============================================
 -- HELPERS
@@ -148,6 +145,98 @@ local function fetch_account_info(cookie)
     local name = json_field(body, "name")
     local id   = json_field(body, "id")
     return name, id
+end
+
+-- ============================================
+-- WEB BACKEND API
+-- ============================================
+local function http_get(url)
+    local tmp = "/sdcard/.hopper_http.tmp"
+    os.execute('curl -s --connect-timeout 5 "' .. url .. '" > "' .. tmp .. '" 2>/dev/null')
+    local f = io.open(tmp, "r")
+    if not f then return "" end
+    local body = f:read("*a") or ""
+    f:close()
+    os.remove(tmp)
+    return body
+end
+
+local function http_post(url, json_body)
+    local tmp = "/sdcard/.hopper_http.tmp"
+    local data_tmp = "/sdcard/.hopper_post.tmp"
+    local df = io.open(data_tmp, "w")
+    if df then df:write(json_body); df:close() end
+    os.execute('curl -s --connect-timeout 5 -X POST '
+        .. '-H "Content-Type: application/json" '
+        .. '-d @"' .. data_tmp .. '" '
+        .. '"' .. url .. '" > "' .. tmp .. '" 2>/dev/null')
+    os.remove(data_tmp)
+    local f = io.open(tmp, "r")
+    if not f then return "" end
+    local body = f:read("*a") or ""
+    f:close()
+    os.remove(tmp)
+    return body
+end
+
+local function api_enabled()
+    return SERVER ~= "" and DEVICE_ID ~= ""
+end
+
+local function api_register()
+    if not api_enabled() then return end
+    local name = DEVICE_ID
+    local acct = read_file(ACCOUNT_FILE)
+    if acct ~= "" then
+        local aname = acct:match("^(.+):%d+$")
+        if aname then name = DEVICE_ID .. " (" .. aname .. ")" end
+    end
+    local body = '{"id":"' .. DEVICE_ID .. '","name":"' .. name .. '","pkg_name":"' .. PKG .. '"}'
+    http_post(SERVER .. "/api/devices/register", body)
+    log("API: registered as " .. DEVICE_ID)
+end
+
+local function api_poll()
+    if not api_enabled() then return nil, nil end
+    local body = http_get(SERVER .. "/api/devices/" .. DEVICE_ID .. "/command")
+    if body == "" then return nil, nil end
+    local cmd = json_field(body, "command")
+    return cmd, body
+end
+
+local function api_status(status)
+    if not api_enabled() then return end
+    local body = '{"status":"' .. status .. '","hop_min":' .. HOP_MIN .. ',"pkg_name":"' .. PKG .. '"}'
+    http_post(SERVER .. "/api/devices/" .. DEVICE_ID .. "/status", body)
+end
+
+local function handle_remote_command(cmd, body)
+    if not cmd or cmd == "none" then return false end
+    log("API cmd: " .. cmd)
+
+    if cmd == "stop" then
+        save_file(STOP_FILE, "stop")
+    elseif cmd == "start" then
+        -- Will be handled by menu loop if idle; no-op if already running
+        return true
+    elseif cmd == "inject_cookie" then
+        local cookie = json_field(body, "cookie")
+        if cookie and cookie ~= "" then
+            save_file(COOKIE_FILE, cookie)
+            os.execute("chmod 600 '" .. COOKIE_FILE .. "'")
+        end
+        inject_cookie()
+    elseif cmd == "inject_all" then
+        inject_cookie()
+        inject_key()
+        inject_autoexec()
+        inject_trackstat()
+    elseif cmd == "set_mode" then
+        local mode = json_field(body, "mode")
+        if mode then log("Mode set: " .. mode) end
+    end
+
+    return false
 end
 
 -- ============================================
@@ -292,7 +381,7 @@ local function show_status(cur_ps, ps_total, crash_count,
                             runtime_m, hop_elapsed_m, status_str)
     cls()
     out("========================")
-    out("  HOPPER MONITOR v1.4.3 ")
+    out("  HOPPER MONITOR v1.5 ")
     out("========================")
     out("")
     out("Pkg    : " .. PKG)
@@ -346,12 +435,13 @@ local function run_hopper()
     end
     os.remove(PTR_FILE)
 
-    local cur_ps      = ptr
-    local crash_count = 0
-    local hop_sec     = HOP_MIN * 60
-    local start_time  = os.time()
-    local hop_time    = os.time()
+    local cur_ps       = ptr
+    local crash_count  = 0
+    local hop_sec      = HOP_MIN * 60
+    local start_time   = os.time()
+    local hop_time     = os.time()
     local last_display = 0
+    local last_poll    = 0
 
     out("")
     inject_all_verbose()
@@ -361,6 +451,8 @@ local function run_hopper()
     cur_ps = ptr
     ptr = ptr + 1
     if ptr > #ps_list then ptr = 1 end
+
+    api_status("running")
 
     out("")
     out("[*] Hopper running... Ctrl+C to stop")
@@ -386,6 +478,13 @@ local function run_hopper()
             local status_str    = running and "RUNNING" or "NOT RUNNING"
             local did_action    = false
 
+            -- Poll backend every 60 seconds
+            if now - last_poll >= 60 then
+                local cmd, body = api_poll()
+                handle_remote_command(cmd, body)
+                last_poll = now
+            end
+
             -- Hop timer
             if HOP_MIN > 0 and hop_elapsed_s >= hop_sec then
                 log("Hop -> PS " .. ptr)
@@ -395,7 +494,7 @@ local function run_hopper()
                 hop_time = os.time(); hop_elapsed_m = 0; did_action = true
             end
 
-            -- PATCH 3: Crash watchdog — does NOT reset hop_time
+            -- Crash watchdog — does NOT reset hop_time
             if not running and not did_action then
                 crash_count = crash_count + 1
                 log("Crash #" .. crash_count .. " relaunch PS " .. cur_ps)
@@ -406,6 +505,8 @@ local function run_hopper()
             if now - last_display >= 15 then
                 show_status(cur_ps, #ps_list, crash_count,
                             runtime_m, hop_elapsed_m, status_str)
+                -- Also report status to backend
+                api_status(status_str == "RUNNING" and "running" or "idle")
                 last_display = now
             end
         end
@@ -420,6 +521,7 @@ local function run_hopper()
     log("Saved PS pointer: " .. cur_ps)
 
     os.remove(STOP_FILE)
+    api_status("idle")
     log("=== Hopper Stopped ===")
 
     cls()
@@ -605,19 +707,61 @@ local function menu_set_hop()
     sleep(1)
 end
 
+local function menu_set_server()
+    cls()
+    out("=== SET SERVER URL ===")
+    out("")
+    if SERVER ~= "" then out("Saat ini: " .. SERVER); out("") end
+    out("Contoh: http://192.168.1.100:3000")
+    out("")
+    local inp = ask("URL (kosong=batal)")
+    if inp == "" then return end
+    SERVER = inp:gsub("/$", "")
+    save_file(SERVER_FILE, SERVER)
+    out("[+] Server: " .. SERVER)
+    sleep(1)
+end
+
+local function menu_set_device_id()
+    cls()
+    out("=== SET DEVICE ID ===")
+    out("")
+    if DEVICE_ID ~= "" then out("Saat ini: " .. DEVICE_ID); out("") end
+    out("ID unik untuk device ini (misal: rf-01)")
+    out("")
+    local inp = ask("Device ID (kosong=batal)")
+    if inp == "" then return end
+    DEVICE_ID = inp
+    save_file(DEVICE_ID_FILE, DEVICE_ID)
+    out("[+] Device ID: " .. DEVICE_ID)
+
+    -- Auto register if server configured
+    if SERVER ~= "" then
+        out("[*] Registering with backend...")
+        api_register()
+        out("[+] Registered.")
+    end
+    sleep(1)
+end
+
 -- ============================================
 -- MAIN MENU
 -- ============================================
 local function main()
     PKG = read_file(PKG_FILE)
+    DEVICE_ID = read_file(DEVICE_ID_FILE)
+    SERVER    = read_file(SERVER_FILE)
 
     local hop_saved = read_file(HOP_FILE)
     local hop_val = tonumber(hop_saved)
     if hop_val and hop_val >= 0 then HOP_MIN = hop_val end
 
+    -- Auto register on startup
+    api_register()
+
     while true do
         cls()
-        out("=== SIMPLE HOPPER v1.4.3 ===")
+        out("=== HOPPER v1.5 ===")
         out("")
         local cookie = read_file(COOKIE_FILE)
         local ps     = load_ps()
@@ -640,6 +784,8 @@ local function main()
 
         out("PS      : " .. #ps)
         out("Hop     : " .. (HOP_MIN == 0 and "OFF" or HOP_MIN.."m"))
+        out("Server  : " .. (SERVER ~= "" and SERVER or "-"))
+        out("Device  : " .. (DEVICE_ID ~= "" and DEVICE_ID or "-"))
 
         -- Show resume info if available
         local saved_ptr = read_file(PTR_FILE)
@@ -653,6 +799,8 @@ local function main()
         out("3. Kelola PS links")
         out("4. Set hop interval")
         out("5. START")
+        out("6. Set server URL")
+        out("7. Set device ID")
         out("0. Keluar")
         out("")
         local ch = ask("Pilih")
@@ -661,6 +809,8 @@ local function main()
         elseif ch == "3" then menu_set_ps()
         elseif ch == "4" then menu_set_hop()
         elseif ch == "5" then run_hopper()
+        elseif ch == "6" then menu_set_server()
+        elseif ch == "7" then menu_set_device_id()
         elseif ch == "0" then cls(); out("Keluar."); break
         end
     end

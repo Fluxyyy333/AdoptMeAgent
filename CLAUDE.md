@@ -19,3 +19,4 @@ Baca API_NOTES.md kalau mengerjakan Starpets module.
 - Log operasi penting ke database
 - Satu fitur selesai dan tested sebelum lanjut ke berikutnya
 - Update PROGRESS.md setiap task selesai
+- Selalu tulis versi jika melakukan perubahan, seperti saat testing hopper via termux. isi versi 1.4.1 jika masih testing dan jadikan 1.5 ketika sudah fix

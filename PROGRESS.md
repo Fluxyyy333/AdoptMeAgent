@@ -3,7 +3,7 @@ Last updated: 2026-03-30
 
 ---
 
-## Status: Hopper v1.4.2 UI Polish di-test — Siap lanjut Phase 1 Backend setelah confirmed
+## Status: Phase 1 MVP SELESAI — Backend + Frontend + Lua Polling
 
 ---
 
@@ -24,34 +24,44 @@ Last updated: 2026-03-30
 
 ---
 
-## Phase 1 — Web Hopper ⏳ BELUM MULAI
+## Phase 1 — Web Hopper ✓ MVP SELESAI
 
-### Backend
-- [ ] Setup Node.js + Express + SQLite
-- [ ] Schema: devices, device_ps, device_cookies, ageup_config
-- [ ] POST /api/device/register
-- [ ] GET  /api/device/command/:id
-- [ ] POST /api/device/status/:id
-- [ ] Cookie store per device
-- [ ] PS management: add/delete/distribute
-- [ ] PS type: normal / ageup
-- [ ] ageup_config: simpan username Potion Handler
-      (untuk whitelist Collector → Potion Handler)
-- [ ] Age Up Mode: redirect semua device ke ageup PS
+### Backend ✓
+- [x] Setup Node.js + Express + SQLite
+- [x] Schema: devices, device_ps, device_cookies, ageup_config, device_commands
+- [x] POST /api/devices/register
+- [x] GET  /api/devices/:id/command (polling)
+- [x] POST /api/devices/:id/status
+- [x] Cookie store per device + auto queue inject_cookie
+- [x] PS management: add/delete per device
+- [x] PS type: normal / ageup
+- [x] ageup_config: simpan username Potion Handler
+- [x] Age Up Mode + Resume: switch semua device sekaligus
+- [x] Auto-offline detection (>2 menit tidak poll)
 
-### Frontend
-- [ ] Setup React + Vite
-- [ ] Device list + status monitor
-- [ ] PS management UI
-- [ ] Cookie inject UI
-- [ ] Input username Potion Handler
-- [ ] Age Up Mode + Resume button
-- [ ] Global start / stop
+### Frontend ✓
+- [x] Setup React + Vite (dark theme)
+- [x] Device list + status + last seen
+- [x] Register device dari UI
+- [x] Send commands: Start / Stop / Inject All
+- [x] Cookie set + inject dari UI
+- [x] PS management per device (add/delete, normal/ageup)
+- [x] Input username Potion Handler
+- [x] Age Up Mode + Resume button
 
-### Lua (Termux)
-- [ ] Polling: GET /api/device/command/:id via curl
-- [ ] Execute command dari backend
-- [ ] Report: POST /api/device/status/:id
+### Lua (Termux) ✓
+- [x] Hopper v1.5: web backend integration
+- [x] Polling: GET /api/devices/:id/command tiap 60 detik
+- [x] Execute remote commands (stop, inject_cookie, inject_all, set_mode)
+- [x] Report status: POST /api/devices/:id/status
+- [x] Auto register on startup
+- [x] Menu: set server URL + device ID
+
+### Belum Ada / Known Gaps
+- [ ] Auth/security di backend (jangan expose tanpa VPN)
+- [ ] Bulk PS distribute (saat ini per-device)
+- [ ] Global start/stop button di frontend
+- [ ] Log viewer per device di frontend
 
 ---
 
@@ -71,32 +81,23 @@ Last updated: 2026-03-30
 
 ---
 
-## Hopper Lua v1.4 — Status
+## Hopper Lua — Version History
 
-### Confirmed Work ✓
-- Hop timer, join PS, watchdog, stop q+Enter
-- Inject Ronix: _key.txt, Accept.lua, Trackstat.lua
-- Menu: package, cookie, PS, hop interval, debug
-- Cookie persist + format nick:pass:cookie
+### v1.4 — v1.4.2 ✓ CONFIRMED
+- Hop timer, join PS, watchdog, crash recovery
+- Inject Ronix: key, autoexec, trackstat
+- Cookie inject: shared_prefs + WebView sqlite3
+- Menu UI, hop persist, PS resume, account info fetch
 
-### Patch 4 (2026-03-29) ✓
-- Cookie inject: preserve XML existing + restorecon SELinux fix
+### v1.4.3 (2026-03-30) ✓
+- Fix io.popen → temp file (fixes dead input after cookie inject)
+- Fix Ctrl+C detection via isleep (Lua 5.1+5.3 compat)
 
-### Patch 5 / v1.4.1 (2026-03-30) ✓ CONFIRMED
-- Update WebView cookie store via sqlite3 (bukan delete)
-- Fix: sqlite3 harus pakai full path /data/data/com.termux/files/usr/bin/sqlite3
-  (su -c tidak include Termux PATH, gagal silent tanpa full path)
-- Cookie inject fully working: shared_prefs + WebView cookies diupdate serentak
-
-### v1.4.2 (2026-03-30) ⏳ TESTING
-- Fix display: \r\n fix (root cause staircase display di Termux)
-- Cookie inject on set + fetch account info via Roblox API (username+ID di main menu)
-- PS management: 1,2,3 bukan a,d,c
-- Hop interval persistence (/sdcard/.hopper_hop)
-- Running mode: Ctrl+C stop (pcall), hapus background reader yang broken
-- Resume PS position saat restart (/sdcard/.hopper_ptr)
-- Progress feedback saat inject [1/4]...[4/4]
-- Display refresh setiap 15 detik
+### v1.5 (2026-03-30) ⏳ TESTING
+- Web backend integration: register, poll, status report
+- Menu: set server URL + device ID
+- Poll commands tiap 60 detik selama hopper running
+- Handle remote commands: stop, inject_cookie, inject_all, set_mode
 
 ---
 
