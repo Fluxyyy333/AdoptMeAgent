@@ -3,7 +3,7 @@
 -- Patch 2: Fixed bash/tty hang -> background sh reader (fixes P2 crash)
 -- Patch 3: Crash watchdog no longer resets hop timer (fixes infinite dead-link loop)
 -- Patch 4: Cookie inject: preserve existing XML keys + restorecon SELinux fix
--- Patch 5: Clear WebView cookie store so Roblox reads from shared_prefs
+-- Patch 5: Update WebView cookie store via sqlite3 (replace value, not delete)
 -- ============================================
 
 local HOPPER_LOG  = "/sdcard/hopper_log.txt"
@@ -169,8 +169,20 @@ local function inject_cookie()
     f:write(xml_content)
     f:close()
 
-    -- Hapus WebView cookie store agar Roblox baca dari shared_prefs
-    su_exec("rm -rf /data/data/" .. PKG .. "/app_webview/Default/Cookies*")
+    -- Update WebView cookie store via sqlite3 agar session tidak logout
+    local cookie_db = "/data/data/" .. PKG .. "/app_webview/Default/Cookies"
+    local sql_tmp   = "/sdcard/.hopper_wv.sql"
+    local safe      = cookie:gsub("'", "''")
+    local sf = io.open(sql_tmp, "w")
+    if sf then
+        sf:write("UPDATE cookies SET value='" .. safe .. "' WHERE name='.ROBLOSECURITY';\n")
+        sf:close()
+        su_exec("sqlite3 '" .. cookie_db .. "' < '" .. sql_tmp .. "'")
+        os.remove(sql_tmp)
+        log("WebView cookie updated")
+    else
+        log("WARN: gagal tulis sql tmp")
+    end
 
     su_exec("mkdir -p '" .. dir .. "'")
     su_exec("cp '" .. tmp .. "' '" .. target .. "'")
