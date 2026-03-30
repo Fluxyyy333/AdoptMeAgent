@@ -1,9 +1,9 @@
-== HOPPER v1.4 (Patch 5) - Setup di Redfinger Fresh ==
+== HOPPER v1.4.2 - Setup di Redfinger Fresh ==
 
 Prerequisite: Termux, Roblox, Ronix sudah terinstall. Root aktif.
 
-== Step 1: Install Lua ==
-pkg update -y && pkg install lua54 -y
+== Step 1: Install Lua + SQLite ==
+pkg update -y && pkg install lua54 sqlite -y
 
 == Step 2: Download hopper ==
 mkdir -p ~/scripts
@@ -13,21 +13,21 @@ curl -sL https://raw.githubusercontent.com/Fluxyyy333/AdoptMeAgent/main/Hopper/h
 lua5.4 ~/scripts/hopper.lua
 
 == Step 4: Konfigurasi (di menu hopper) ==
-1 - Set package    : pilih com.fluxy1 (atau package Roblox yang terinstall)
-2 - Set cookie     : paste .ROBLOSECURITY cookie akun farmer
-3 - Kelola PS links: tambah PS link satu per satu
-4 - Set hop interval: contoh 12 (menit), 0 = OFF
+1 - Set package     : pilih com.fluxy1 (atau package Roblox yang terinstall)
+2 - Set cookie      : paste .ROBLOSECURITY, langsung inject + fetch username
+3 - Kelola PS links : 1=Tambah 2=Hapus 3=Clear 0=Kembali
+4 - Set hop interval: contoh 12 (menit), 0 = OFF (tersimpan antar sesi)
 
 == Step 5: START ==
 5 - Start hopper
 
 == Kontrol saat running ==
-q + Enter = Stop
-h + Enter = Force hop ke PS berikutnya
+Ctrl+C          = Stop hopper (resume dari PS terakhir saat restart)
+touch /sdcard/.hopper_stop = Stop dari tab Termux lain
 
 == Verify cookie inject ==
 cat /sdcard/hopper_log.txt
-Harus muncul: "Cookie injected (uid=XXXXX)"
+Harus muncul: "Cookie injected (uid=XXXXX)" dan "WebView cookie updated"
 
-Cek manual:
-su -c 'cat /data/data/com.fluxy1/shared_prefs/RobloxSharedPreferences.xml'
+== Update script ==
+curl -sL https://raw.githubusercontent.com/Fluxyyy333/AdoptMeAgent/main/Hopper/hopper.lua -o ~/scripts/hopper.lua

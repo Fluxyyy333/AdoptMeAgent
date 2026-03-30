@@ -3,7 +3,7 @@ Last updated: 2026-03-30
 
 ---
 
-## Status: Hopper v1.4.1 Cookie Inject CONFIRMED ✓ — Siap lanjut Phase 1 Backend
+## Status: Hopper v1.4.2 UI Polish di-test — Siap lanjut Phase 1 Backend setelah confirmed
 
 ---
 
@@ -87,6 +87,16 @@ Last updated: 2026-03-30
 - Fix: sqlite3 harus pakai full path /data/data/com.termux/files/usr/bin/sqlite3
   (su -c tidak include Termux PATH, gagal silent tanpa full path)
 - Cookie inject fully working: shared_prefs + WebView cookies diupdate serentak
+
+### v1.4.2 (2026-03-30) ⏳ TESTING
+- Fix display: \r\n fix (root cause staircase display di Termux)
+- Cookie inject on set + fetch account info via Roblox API (username+ID di main menu)
+- PS management: 1,2,3 bukan a,d,c
+- Hop interval persistence (/sdcard/.hopper_hop)
+- Running mode: Ctrl+C stop (pcall), hapus background reader yang broken
+- Resume PS position saat restart (/sdcard/.hopper_ptr)
+- Progress feedback saat inject [1/4]...[4/4]
+- Display refresh setiap 15 detik
 
 ---
 
