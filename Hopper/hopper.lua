@@ -1,4 +1,4 @@
--- Simple PS Hopper v1.4.2
+-- Simple PS Hopper v1.4.3
 -- Patch 1: Cache-only clear before each launch (fixes crash on server switch)
 -- Patch 2: Fixed bash/tty hang -> background sh reader (fixes P2 crash)
 -- Patch 3: Crash watchdog no longer resets hop timer (fixes infinite dead-link loop)
@@ -6,6 +6,8 @@
 -- Patch 5: Update WebView cookie store via sqlite3 full path (replace value, not delete)
 -- v1.4.2: UI/QOL polish — \r\n fix, cookie inject+account info, hop persist,
 --         Ctrl+C stop, PS resume, progress feedback
+-- v1.4.3: Fix io.popen→temp file (fixes dead input after inject),
+--         Fix Ctrl+C detection via isleep (Lua 5.1+5.3 compat)
 -- ============================================
 
 local HOPPER_LOG   = "/sdcard/hopper_log.txt"
@@ -37,6 +39,18 @@ local HOP_MIN = 0
 -- ============================================
 local function sleep(s)
     if s and s > 0 then os.execute("sleep " .. tostring(s)) end
+end
+
+-- Returns true if interrupted by Ctrl+C
+-- Compatible with Lua 5.1 (returns number) and 5.3+ (returns bool, string, code)
+local function isleep(s)
+    if not s or s <= 0 then return false end
+    local r1, r2 = os.execute("sleep " .. tostring(s))
+    -- Lua 5.3+: r2 is "exit" or "signal"
+    if r2 == "signal" then return true end
+    -- Lua 5.1: r1 is exit status number, r2 is nil; non-zero = interrupted
+    if r2 == nil and type(r1) == "number" and r1 ~= 0 then return true end
+    return false
 end
 
 local function su_exec(cmd)
@@ -121,12 +135,16 @@ local function json_field(json_str, field)
 end
 
 local function fetch_account_info(cookie)
-    local h = io.popen('curl -s --connect-timeout 5 '
+    local tmp = "/sdcard/.hopper_acct.tmp"
+    os.execute('curl -s --connect-timeout 5 '
         .. '-H "Cookie: .ROBLOSECURITY=' .. cookie .. '" '
-        .. '"https://users.roblox.com/v1/users/authenticated" 2>/dev/null')
-    if not h then return nil, nil end
-    local body = h:read("*a") or ""
-    h:close()
+        .. '"https://users.roblox.com/v1/users/authenticated" '
+        .. '> "' .. tmp .. '" 2>/dev/null')
+    local f = io.open(tmp, "r")
+    if not f then return nil, nil end
+    local body = f:read("*a") or ""
+    f:close()
+    os.remove(tmp)
     local name = json_field(body, "name")
     local id   = json_field(body, "id")
     return name, id
@@ -137,10 +155,11 @@ end
 -- ============================================
 local function is_running()
     if PKG == "" then return false end
-    local h = io.popen("su -c 'pidof " .. PKG .. "' 2>/dev/null")
-    if not h then return false end
-    local r = h:read("*a") or ""; h:close()
-    return r:match("%d+") ~= nil
+    local tmp = "/sdcard/.hopper_pid.tmp"
+    os.execute("su -c 'pidof " .. PKG .. "' > '" .. tmp .. "' 2>/dev/null")
+    local pid = read_file(tmp)
+    os.remove(tmp)
+    return pid:match("%d+") ~= nil
 end
 
 local function inject_cookie()
@@ -150,9 +169,12 @@ local function inject_cookie()
     local target = dir .. "/RobloxSharedPreferences.xml"
     local tmp    = "/sdcard/.hcookie_tmp.xml"
 
-    local xh = io.popen("su -c 'cat \"" .. target .. "\"' 2>/dev/null")
-    local existing = xh and xh:read("*a") or ""
-    if xh then xh:close() end
+    local xml_tmp = "/sdcard/.hopper_xmlread.tmp"
+    os.execute("su -c 'cat \"" .. target .. "\"' > '" .. xml_tmp .. "' 2>/dev/null")
+    local xf = io.open(xml_tmp, "r")
+    local existing = xf and xf:read("*a") or ""
+    if xf then xf:close() end
+    os.remove(xml_tmp)
 
     local xml_content
     if existing ~= "" and existing:find("ROBLOSECURITY") then
@@ -193,10 +215,10 @@ local function inject_cookie()
     su_exec("mkdir -p '" .. dir .. "'")
     su_exec("cp '" .. tmp .. "' '" .. target .. "'")
 
-    local uid_h = io.popen("su -c 'stat -c %u /data/data/" .. PKG .. "' 2>/dev/null")
-    local uid = uid_h and uid_h:read("*l") or ""
-    if uid_h then uid_h:close() end
-    uid = uid:gsub("%c",""):gsub("%s","")
+    local uid_tmp = "/sdcard/.hopper_uid.tmp"
+    os.execute("su -c 'stat -c %u /data/data/" .. PKG .. "' > '" .. uid_tmp .. "' 2>/dev/null")
+    local uid = read_file(uid_tmp)
+    os.remove(uid_tmp)
     if uid ~= "" then
         su_exec("chown " .. uid .. ":" .. uid .. " '" .. target .. "'")
     end
@@ -270,7 +292,7 @@ local function show_status(cur_ps, ps_total, crash_count,
                             runtime_m, hop_elapsed_m, status_str)
     cls()
     out("========================")
-    out("  HOPPER MONITOR v1.4.2 ")
+    out("  HOPPER MONITOR v1.4.3 ")
     out("========================")
     out("")
     out("Pkg    : " .. PKG)
@@ -346,7 +368,10 @@ local function run_hopper()
 
     local ok, err = pcall(function()
         while true do
-            sleep(5)
+            if isleep(5) then
+                log("Ctrl+C detected")
+                return
+            end
 
             if file_exists(STOP_FILE) then
                 log("Stop file detected")
@@ -418,10 +443,12 @@ local function menu_set_package()
     local saved = read_file(PKG_FILE)
     if saved ~= "" then out("Tersimpan: " .. saved); out("") end
 
-    local h = io.popen("pm list packages 2>/dev/null")
+    local pkg_tmp = "/sdcard/.hopper_pkglist.tmp"
+    os.execute("pm list packages > '" .. pkg_tmp .. "' 2>/dev/null")
     local pkgs = {}
-    if h then
-        local r = h:read("*a") or ""; h:close()
+    local pf = io.open(pkg_tmp, "r")
+    if pf then
+        local r = pf:read("*a") or ""; pf:close()
         for line in r:gmatch("[^\r\n]+") do
             local p = line:match("package:(.+)")
             if p then
@@ -431,6 +458,7 @@ local function menu_set_package()
         end
         table.sort(pkgs)
     end
+    os.remove(pkg_tmp)
 
     if #pkgs > 0 then
         out("Package tersedia:")
@@ -589,7 +617,7 @@ local function main()
 
     while true do
         cls()
-        out("=== SIMPLE HOPPER v1.4.2 ===")
+        out("=== SIMPLE HOPPER v1.4.3 ===")
         out("")
         local cookie = read_file(COOKIE_FILE)
         local ps     = load_ps()
