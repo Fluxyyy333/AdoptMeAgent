@@ -3,7 +3,7 @@
 -- Patch 2: Fixed bash/tty hang -> background sh reader (fixes P2 crash)
 -- Patch 3: Crash watchdog no longer resets hop timer (fixes infinite dead-link loop)
 -- Patch 4: Cookie inject: preserve existing XML keys + restorecon SELinux fix
--- Patch 5: Update WebView cookie store via sqlite3 (replace value, not delete)
+-- Patch 5: Update WebView cookie store via sqlite3 full path (replace value, not delete)
 -- ============================================
 
 local HOPPER_LOG  = "/sdcard/hopper_log.txt"
@@ -177,7 +177,7 @@ local function inject_cookie()
     if sf then
         sf:write("UPDATE cookies SET value='" .. safe .. "' WHERE name='.ROBLOSECURITY';\n")
         sf:close()
-        su_exec("sqlite3 '" .. cookie_db .. "' < '" .. sql_tmp .. "'")
+        su_exec("/data/data/com.termux/files/usr/bin/sqlite3 '" .. cookie_db .. "' < '" .. sql_tmp .. "'")
         os.remove(sql_tmp)
         log("WebView cookie updated")
     else
