@@ -1,6 +1,8 @@
--- Simple PS Hopper v1.5
+-- Simple PS Hopper v1.6.2
 -- v1.4.x: standalone Termux hopper with menu, cookie inject, PS management
 -- v1.5:   Web backend integration — register, poll commands, report status
+-- v1.6:   Offline mode, auto-detect backend down, cache config locally
+-- v1.6.2: Support ngrok/HTTPS URLs in menu option 8
 -- ============================================
 
 local HOPPER_LOG     = "/sdcard/hopper_log.txt"
@@ -783,27 +785,30 @@ local function menu_set_ip()
     cls()
     out("=== SET PC IP ADDRESS ===")
     out("")
-    out("Cari IP PC di Windows:")
-    out("  1. Buka CMD")
-    out("  2. Ketik: ipconfig")
-    out("  3. Lihat IPv4 Address (misal: 192.168.1.100)")
+    out("Contoh:")
+    out("  - IP lokal: 192.168.1.100")
+    out("  - Ngrok URL: https://abdul-mediaeval-chan.ngrok-free.dev")
+    out("  - Full URL: http://192.168.1.100:3000")
     out("")
     if SERVER ~= "" then
         local ip_only = SERVER:match("//(.+):") or SERVER
-        out("IP saat ini: " .. ip_only)
+        out("Saat ini: " .. ip_only)
         out("")
     end
-    local inp = ask("IP address (contoh: 192.168.1.100)")
+    local inp = ask("IP / URL (kosong=batal)")
     if inp == "" then return end
 
-    -- Validate basic IP format
-    if not inp:match("%d+%.%d+%.%d+%.%d+") then
-        out("[!] Format IP tidak valid")
-        sleep(1)
-        return
+    -- If input contains "://", use as-is (full URL)
+    if inp:match("://") then
+        SERVER = inp:gsub("/$", "")  -- Remove trailing slash
+    -- If input contains ".", assume it's an IP and wrap it
+    elseif inp:match("%d+%.%d+%.%d+%.%d+") then
+        SERVER = "http://" .. inp .. ":3000"
+    -- Otherwise, assume it's a domain, wrap with https://
+    else
+        SERVER = "https://" .. inp
     end
 
-    SERVER = "http://" .. inp .. ":3000"
     save_file(SERVER_FILE, SERVER)
     out("[+] Server URL: " .. SERVER)
     sleep(1)
@@ -863,7 +868,7 @@ local function main()
 
     while true do
         cls()
-        out("=== HOPPER v1.5 ===")
+        out("=== HOPPER v1.6.2 ===")
         out("")
         local cookie = read_file(COOKIE_FILE)
         local ps     = load_ps()
