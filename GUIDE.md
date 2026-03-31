@@ -333,6 +333,113 @@ If Redfinger is cloud-based, use:
 
 ---
 
+## 9. Offline Mode (Hopper v1.6)
+
+### Scenario
+Your PC running the backend shuts down or crashes. **What happens to the hopper in Redfinger?**
+
+### Before v1.6
+❌ Hopper stops immediately → Devices stop hopping
+
+### With v1.6 (Offline Mode)
+✅ **Hopper keeps running!**
+
+### How It Works
+
+1. **Normal Mode (Backend Online)**
+   ```
+   Hopper polls backend every 60 seconds
+   ↓
+   Backend responds with commands
+   ↓
+   Hopper executes (hop, start, stop, inject)
+   ↓
+   Display: [ONLINE]
+   ```
+
+2. **Backend Down Detected**
+   ```
+   Hopper tries to poll backend
+   ↓
+   Connection timeout/refused
+   ↓
+   is_offline = true
+   ↓
+   Load cached config (hop_interval, etc)
+   ↓
+   Display: [OFFLINE]
+   ```
+
+3. **Offline Mode (Backend Unreachable)**
+   ```
+   Hopper uses cached hop_interval (e.g., 50 minutes)
+   ↓
+   Keeps hopping automatically
+   ↓
+   Keeps running app if it crashes
+   ↓
+   Polls backend every 30s (faster retry)
+   ↓
+   Display: [OFFLINE]
+   ```
+
+4. **Backend Reconnects**
+   ```
+   Polling succeeds again
+   ↓
+   is_offline = false
+   ↓
+   Resume normal 60s polling
+   ↓
+   Can receive commands from dashboard again
+   ↓
+   Display: [ONLINE]
+   ```
+
+### Example Timeline
+
+```
+Time  Event                           Hopper Status
+---------------------------------------------
+8:00  Backend running                 ONLINE, hopping
+8:30  PC crashes / backend down       Still hopping (offline mode)
+8:31  Config cached locally           [OFFLINE] indicator
+9:00  Backend still down              Still hopping with cached settings
+9:15  PC restarted, backend online    Reconnected!
+9:16  Now responsive to dashboard     ONLINE again
+```
+
+### What Gets Cached?
+
+Hopper saves to `~/.hopper_config_cache`:
+- `hop_interval` — minutes between hops
+- `endpoint_ps` — (planned for future)
+- `endpoint_interval` — (planned for future)
+
+### Limitations in Offline Mode
+
+- ❌ Cannot receive new commands from dashboard
+- ❌ Cannot get updated PS links
+- ❌ Cannot receive config changes
+- ✅ But hopping continues with **last known settings**
+
+### Use Cases
+
+1. **Scheduled PC maintenance**
+   - Stop backend → Hopper keeps running
+   - Restart PC → Hopper reconnects automatically
+
+2. **Internet outage**
+   - Internet down → Hopper continues offline
+   - Internet back → Hopper resumes syncing
+
+3. **24/7 hopping without PC**
+   - Run Lua script overnight
+   - PC can shutdown
+   - Hopper keeps going in offline mode
+
+---
+
 ## 9. File Layout
 
 ```
@@ -370,15 +477,23 @@ AdoptMeAgent/
 
 ## 10. Version History
 
-**v2.0.0** (Current)
-- Complete UI rewrite: WinterHub-style sidebar
-- Schema: ps_pool, global_config, device_ps simplified
-- New settings endpoint (replaces config route)
-- Bulk-inject cookies (1:1 distribution)
-- Dashboard: stat cards + device cards
-- Private Servers: pool + distribute + distribution view
-- Cookies: device list + bulk paste + inject
-- Config: package, hop interval, endpoint PS, endpoint interval
+**v2.0.0 + Hopper v1.6** (Current)
+- **Backend:** Complete UI rewrite: WinterHub-style sidebar
+  * Schema: ps_pool, global_config, device_ps simplified
+  * New settings endpoint (replaces config route)
+  * Bulk-inject cookies (1:1 distribution)
+  * Dashboard: stat cards + device cards
+  * Private Servers: pool + distribute + distribution view
+  * Cookies: device list + bulk paste + inject
+  * Config: package, hop interval, endpoint PS, endpoint interval
+
+- **Hopper v1.6: Offline Mode** 🔥 NEW
+  * ✅ Auto-detects when backend/PC is down
+  * ✅ Caches config locally (hop_interval, etc)
+  * ✅ **Continues hopping without backend** using cached settings
+  * ✅ Auto-retry connect every 30s (faster reconnection)
+  * ✅ Resumes normal operation when backend online
+  * ✅ PC can shutdown/restart without stopping hopper!
 
 **v1.5.0**
 - Basic web backend + React MVP
