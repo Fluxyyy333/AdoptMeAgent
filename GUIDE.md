@@ -1,263 +1,395 @@
-# GUIDE — Adopt Me Hopper Dashboard Setup & Testing
+# GUIDE — Hopper Dashboard v2.0 Setup & Testing
 
 ## Architecture
-```
-[Windows Server / PC]
-  ├── backend/   (Node.js + Express + SQLite)  → port 3000
-  ├── frontend/  (React + Vite)                → port 5173 (dev)
-  └── Hopper/    (hopper.lua)                  → di Termux tiap device RF
-```
 
-Device Lua script poll backend tiap 60 detik untuk ambil command.
-Frontend akses backend via API proxy (vite dev) atau langsung (production).
+```
+┌─────────────────────────────────────────┐
+│  Browser: http://your-pc:5173           │
+│  (Dashboard, PS, Cookies, Config)       │
+└────────────────┬────────────────────────┘
+                 │ HTTP (Vite proxy)
+     ┌───────────┴────────────────┐
+     │                            │
+┌────▼──────────┐   ┌────────────▼────────┐
+│ Backend       │   │ Frontend React      │
+│ :3000/api/*   │   │ :5173 (dev/prod)    │
+│ Express       │   │ - Dashboard         │
+│ + SQLite      │   │ - Private Servers   │
+└────┬──────────┘   │ - Cookies           │
+     │              │ - Config            │
+     │ HTTP polling └─────────────────────┘
+     │ (every 10s)
+  ┌──▼──────────────────────────┐
+  │ Redfinger Termux             │
+  │ Lua v1.5+ hopper script      │
+  │ - Polls /api/devices/cmd     │
+  │ - Reports status             │
+  │ - Executes: start/stop       │
+  └──────────────────────────────┘
+```
 
 ---
 
-## 1. Setup Backend (di PC / Windows Server)
+## 1. Local Development (Windows PC)
 
 ### Prerequisites
 - Node.js v18+
 - npm
 
-### Install & Run
+### Terminal 1: Backend
 ```bash
 cd backend
-npm install
 node server.js
+# Output: Backend running on http://localhost:3000
 ```
-Output: `Backend running on http://localhost:3000`
 
-### Verifikasi
+Verify:
 ```bash
 curl http://localhost:3000/api/devices
-# Harus return: []
-
-curl http://localhost:3000/api/config
-# Harus return: {"id":1,"potion_handler_username":"","updated_at":0}
+# Returns: []
 ```
 
----
-
-## 2. Setup Frontend (di PC / Windows Server)
-
-### Install & Run
+### Terminal 2: Frontend
 ```bash
 cd frontend
-npm install
-npm run dev
+npx vite
+# Output: Local: http://localhost:5173
 ```
-Output: `Local: http://localhost:5173/`
 
-Buka browser ke `http://localhost:5173` → Hopper Dashboard.
-
-### Production Build (opsional)
-```bash
-cd frontend
-npm run build
-```
-File statis di `frontend/dist/` — bisa serve dari Express nanti.
+**Open browser:** `http://localhost:5173`
 
 ---
 
-## 3. Setup Lua di Termux (tiap device Redfinger)
+## 2. First Time Setup (UI)
 
-### Prerequisites
-- Termux terinstall + rooted
-- `pkg install lua54 curl`
-- File `hopper.lua` sudah ada di device (push via git / manual copy)
+### Register Devices
+Dashboard tab → "+ Add Device"
+- Device ID: `rf-01`, `rf-02`, etc. (unique)
+- Display Name: `Redfinger 1`, etc.
+- Click: Register
 
-### Jalankan
-```bash
-cd /sdcard
-lua54 hopper.lua
-```
+### Add Private Servers
+Private Servers tab:
+1. Paste PS links (one per line)
+2. Set "Max PS per device" (e.g., 6)
+3. Click "Distribute"
 
-### Konfigurasi pertama kali
-Dari menu Hopper:
-1. **Set package** (pilih `1`) → pilih Roblox package dari list
-2. **Set cookie** (pilih `2`) → paste .ROBLOSECURITY cookie
-3. **Kelola PS links** (pilih `3`) → tambah PS link
-4. **Set hop interval** (pilih `4`) → misal `50` (menit)
-5. **Set server URL** (pilih `6`) → `http://IP_PC:3000`
-6. **Set device ID** (pilih `7`) → `rf-01` (unik per device)
-7. **START** (pilih `5`)
+### Inject Cookies
+Cookies tab:
+1. Paste N cookies (N = device count)
+2. Click "Inject (N)"
+3. Devices get `inject_cookie` command queued
 
-> **PENTING**: Server URL harus IP yang bisa dijangkau dari Redfinger.
-> Kalau PC di jaringan lokal, pakai IP LAN (misal `192.168.1.100`).
-> Kalau Redfinger cloud, harus pakai IP publik / tunneling.
+### Global Config
+Config tab:
+- **Package Name**: `com.roblox.client`
+- **Hop Interval**: `50` (minutes)
+- **End Point PS Link**: `https://...?privateServerLinkCode=...` (pabrik besar)
+- **End Point Interval**: `30` (minutes)
+- Click: Save
 
 ---
 
-## 4. Firewall
+## 3. Testing on Redfinger
 
-Backend perlu port 3000 terbuka supaya device RF bisa akses.
+### Step 1: Find Your PC's IP
+Windows CMD:
+```bash
+ipconfig
+```
+Look for "IPv4 Address", e.g., `192.168.1.100`
 
-Windows:
+### Step 2: Update Lua Script
+In Redfinger Termux, edit `hopper.lua`:
+```lua
+-- Line ~10, update:
+local BACKEND = "http://192.168.1.100:3000"
+```
+
+### Step 3: Start Lua Hopper
+```bash
+cd ~/hopper
+lua hopper.lua
+```
+
+Output should show:
+```
+[Device ID: rf-01]
+Polling http://192.168.1.100:3000/api/devices/rf-01/command
+```
+
+### Step 4: Send Commands from Dashboard
+
+**Start Regular Hopper** → Click "Start" button
+- Lua receives: `{command: "start", payload: {mode: "regular"}}`
+- Hopper runs for `hop_interval` minutes
+- Then moves to End Point PS Link
+
+**Start End Point Only** → Click "Endpoint" button
+- Lua receives: `{command: "start", payload: {mode: "endpoint"}}`
+- Goes directly to End Point PS (no hopping)
+- Stays for `endpoint_interval` minutes
+
+**Stop** → Click "Stop" button
+- Lua receives: `{command: "stop"}`
+- Stops immediately
+
+**Inject Cookie**
+- Cookies tab → paste → Inject
+- Lua receives: `{command: "inject_cookie", payload: {cookie: "..."}}`
+
+### Step 5: Monitor Status
+- Dashboard stat cards update every 10s
+- Device cards show: status, last seen, PS count, cookie, hop mins
+- Red = offline (not seen for 2+ mins)
+
+---
+
+## 4. Firewall Setup
+
+Open port 3000 for Redfinger to reach backend:
+
+**Windows Defender (PowerShell as Admin):**
 ```powershell
 netsh advfirewall firewall add rule name="Hopper Backend" dir=in action=allow protocol=tcp localport=3000
 ```
 
+Or manually:
+- Windows Defender → Advanced Settings → Inbound Rules → New Rule
+- Port: 3000, TCP, Allow
+
 ---
 
-## 5. Testing Guide
+## 5. API Reference
 
-### Test A: Backend API (dari PC)
+### Devices
+```
+POST /api/devices/register
+  Body: {id, name, pkg_name}
+  → Register/update device
+
+GET /api/devices
+  → Get all devices
+
+GET /api/devices/:id/command
+  → Lua polls this every 10s
+  → Returns: {command, payload} or {command: "none"}
+
+POST /api/devices/:id/status
+  Body: {status, hop_min, pkg_name}
+  → Lua reports status
+
+POST /api/devices/:id/command
+  Body: {command, payload}
+  → Queue command to device
+
+DELETE /api/devices/:id
+  → Delete device
+```
+
+### Private Servers
+```
+GET /api/ps/pool
+  → Get all PS links
+
+POST /api/ps/pool
+  Body: {links: [...]}
+  → Add multiple PS links
+
+DELETE /api/ps/pool
+  → Clear all
+
+POST /api/ps/distribute
+  Body: {max_per_device}
+  → Distribute round-robin
+
+GET /api/ps/distribution
+  → Get distribution grouped by device
+
+GET /api/ps?device_id=x
+  → Lua polls this
+  → Returns: [{id, device_id, ps_link}, ...]
+```
+
+### Cookies
+```
+GET /api/cookies?device_id=x
+  → Get cookies for device
+
+POST /api/cookies/bulk-inject
+  Body: {cookies: [...]}
+  → Distribute N cookies to N devices (1:1)
+```
+
+### Settings
+```
+GET /api/settings
+  → Get global config
+
+PUT /api/settings
+  Body: {pkg_name, hop_interval, endpoint_ps, endpoint_interval}
+  → Update config
+```
+
+---
+
+## 6. Manual API Testing (Optional)
 
 ```bash
 # Register device
 curl -X POST http://localhost:3000/api/devices/register \
   -H "Content-Type: application/json" \
-  -d '{"id":"test-01","name":"Test Device","pkg_name":"com.roblox.client"}'
+  -d '{"id":"test-01","name":"Test","pkg_name":"com.roblox.client"}'
 
-# List devices → harus muncul test-01
+# List devices
 curl http://localhost:3000/api/devices
 
-# Add PS link
-curl -X POST http://localhost:3000/api/ps \
+# Add PS links
+curl -X POST http://localhost:3000/api/ps/pool \
   -H "Content-Type: application/json" \
-  -d '{"device_id":"test-01","ps_link":"https://www.roblox.com/games/920587237?privateServerLinkCode=abc123","ps_type":"normal"}'
+  -d '{"links":["https://...?code=abc","https://...?code=def"]}'
 
-# List PS links
-curl http://localhost:3000/api/ps?device_id=test-01
+# Distribute
+curl -X POST http://localhost:3000/api/ps/distribute \
+  -H "Content-Type: application/json" \
+  -d '{"max_per_device":6}'
 
-# Send command to device
+# Send command
 curl -X POST http://localhost:3000/api/devices/test-01/command \
   -H "Content-Type: application/json" \
-  -d '{"command":"start"}'
+  -d '{"command":"start","payload":{"mode":"regular"}}'
 
-# Poll command (simulates Lua polling)
+# Poll command (Lua perspective)
 curl http://localhost:3000/api/devices/test-01/command
-# Harus return: {"command":"start","payload":{}}
 
-# Poll lagi → harus return none
-curl http://localhost:3000/api/devices/test-01/command
-# Harus return: {"command":"none"}
-
-# Set cookie
-curl -X POST http://localhost:3000/api/cookies \
+# Bulk inject cookies
+curl -X POST http://localhost:3000/api/cookies/bulk-inject \
   -H "Content-Type: application/json" \
-  -d '{"device_id":"test-01","cookie":"_|WARNING_FAKE_COOKIE","roblox_username":"TestUser","roblox_id":"12345"}'
+  -d '{"cookies":["_|WARNING...","..|WARNING..."]}'
 
-# Age Up Mode → all devices switch to ageup
-curl -X POST http://localhost:3000/api/config/ageup-mode
+# Get config
+curl http://localhost:3000/api/settings
 
-# Resume → all devices back to normal
-curl -X POST http://localhost:3000/api/config/resume
-
-# Set potion handler username
-curl -X PUT http://localhost:3000/api/config \
+# Update config
+curl -X PUT http://localhost:3000/api/settings \
   -H "Content-Type: application/json" \
-  -d '{"potion_handler_username":"MyPotionHandler"}'
-
-# Verify config
-curl http://localhost:3000/api/config
-
-# Cleanup
-curl -X DELETE http://localhost:3000/api/devices/test-01
+  -d '{"pkg_name":"com.roblox.client","hop_interval":50,"endpoint_ps":"https://...","endpoint_interval":30}'
 ```
-
-### Test B: Frontend UI (di browser)
-
-1. Buka `http://localhost:5173`
-2. **Tab Devices:**
-   - Klik "+ Add Device" → isi ID `rf-01`, name `Redfinger 1` → Register
-   - Device muncul dengan status `idle`
-   - Klik "Set Cookie" → paste cookie → Save & Inject
-   - Klik Start/Stop/Inject All → harus show alert "Command queued"
-   - Klik "Age Up Mode" → semua device status jadi AGEUP badge
-   - Klik "Resume" → badge hilang
-3. **Tab PS Links:**
-   - Pilih device dari dropdown
-   - Add PS link → muncul di tabel
-   - Delete → link hilang
-   - Test tipe normal dan ageup
-4. **Tab Config:**
-   - Set potion handler username → Save → muncul "Saved: ..."
-
-### Test C: Lua ↔ Backend (di Termux)
-
-1. Jalankan `lua54 hopper.lua`
-2. Set server URL (menu 6) → `http://IP_PC:3000`
-3. Set device ID (menu 7) → `rf-01`
-   - Harus muncul "[+] Registered."
-4. Cek dashboard frontend → device `rf-01` harus muncul
-5. Dari dashboard, klik "Set Cookie" → paste cookie → Save
-6. Di Termux, START hopper (menu 5)
-7. Cek dashboard → status harus berubah ke `running`
-8. Dari dashboard, send "Stop" command
-9. Tunggu ~60 detik (polling interval) → hopper harus stop
-
-### Test D: Auto-offline Detection
-
-1. Register device via Lua, START hopper
-2. Kill Termux (force close)
-3. Tunggu ~2 menit
-4. Cek dashboard → status harus berubah ke `offline`
 
 ---
 
-## 6. File Layout
+## 7. Troubleshooting
+
+### Backend Port Already in Use
+```bash
+netstat -ano | findstr :3000
+taskkill /PID <PID> /F
+```
+
+### Lua Can't Reach Backend
+- Verify IP address is correct (`ipconfig`)
+- Check firewall allows port 3000
+- Test: `ping 192.168.1.100` from RF Termux
+
+### Device Shows "Offline" but Lua is Running
+- Check Lua has correct BACKEND URL
+- Verify `/api/devices/:id/status` endpoint is called
+- Restart backend: `node server.js`
+
+### Commands Not Received
+- Ensure Lua is polling `/api/devices/:id/command`
+- Check backend logs for errors
+- Test endpoint manually: `curl http://localhost:3000/api/devices/rf-01/command`
+
+### PS Links Not Distributed
+- Click "Distribute" button first
+- Check "Current Distribution" section shows devices
+- Verify `GET /api/ps?device_id=rf-01` returns links
+
+---
+
+## 8. Production Deployment
+
+### Build Frontend
+```bash
+cd frontend
+npm run build
+# Output: dist/ folder with minified assets
+```
+
+### Serve Static Files (Optional)
+Add to `backend/server.js`:
+```javascript
+app.use(express.static(path.join(__dirname, "../frontend/dist")));
+```
+
+Then backend serves both API and frontend on port 3000.
+
+### Firewall for Redfinger Cloud
+If Redfinger is cloud-based, use:
+- Ngrok: `ngrok http 3000` → get public URL
+- Cloudflare Tunnel: `cloudflare tunnel`
+- Update Lua `BACKEND` to the public URL
+
+---
+
+## 9. File Layout
 
 ```
 AdoptMeAgent/
 ├── backend/
-│   ├── server.js          # Express server entry
-│   ├── db.js              # SQLite schema + init
+│   ├── server.js
+│   ├── db.js              # Schema migration-safe
 │   ├── routes/
-│   │   ├── devices.js     # Device CRUD + command polling
-│   │   ├── ps.js          # PS link management
-│   │   ├── cookies.js     # Cookie store + inject
-│   │   └── config.js      # Age Up config + mode switch
+│   │   ├── devices.js     # Device CRUD + polling
+│   │   ├── ps.js          # PS pool + distribute
+│   │   ├── cookies.js     # Cookie + bulk-inject
+│   │   └── settings.js    # Global config (NEW)
 │   ├── package.json
 │   └── hopper.db          # Auto-created (gitignored)
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx        # Main app + tab navigation
-│   │   ├── App.css        # Dark theme styles
-│   │   ├── api.js         # API helper (get/post/put/del)
+│   │   ├── App.jsx        # Sidebar nav (NEW)
+│   │   ├── App.css        # GitHub dark theme
+│   │   ├── api.js
 │   │   └── components/
-│   │       ├── Devices.jsx    # Device list + register + commands
-│   │       ├── PSManager.jsx  # PS link CRUD per device
-│   │       └── Config.jsx     # Potion handler config
-│   └── vite.config.js     # Proxy /api → localhost:3000
+│   │       ├── Dashboard.jsx      # Stat cards + device list (NEW)
+│   │       ├── PrivateServers.jsx # Pool + distribute (NEW)
+│   │       ├── Cookies.jsx        # Bulk inject (NEW)
+│   │       └── Config.jsx         # Global settings (NEW)
+│   ├── package.json
+│   └── vite.config.js
 ├── Hopper/
-│   └── hopper.lua         # v1.5: standalone + web backend polling
+│   └── hopper.lua         # v1.5: polling + commands
 ├── MASTERPLAN.md
 ├── PROGRESS.md
-└── GUIDE.md               # ← file ini
+└── GUIDE.md               # ← This file
 ```
 
 ---
 
-## 7. API Reference
+## 10. Version History
 
-| Method | Endpoint | Body | Description |
-|--------|----------|------|-------------|
-| POST | /api/devices/register | {id, name, pkg_name} | Register/update device |
-| GET | /api/devices | - | List all devices |
-| GET | /api/devices/:id | - | Get single device |
-| DELETE | /api/devices/:id | - | Delete device |
-| GET | /api/devices/:id/command | - | Poll next command (Lua) |
-| POST | /api/devices/:id/command | {command, payload} | Queue command |
-| POST | /api/devices/:id/status | {status, hop_min, pkg_name} | Report status (Lua) |
-| GET | /api/ps?device_id=x | - | List PS links |
-| POST | /api/ps | {device_id, ps_link, ps_type} | Add PS link |
-| DELETE | /api/ps/:id | - | Delete PS link |
-| PUT | /api/ps/:id | {ps_type, active} | Update PS link |
-| GET | /api/cookies?device_id=x | - | List cookies |
-| POST | /api/cookies | {device_id, cookie, ...} | Set cookie + queue inject |
-| DELETE | /api/cookies/:id | - | Delete cookie |
-| GET | /api/config | - | Get ageup config |
-| PUT | /api/config | {potion_handler_username} | Update config |
-| POST | /api/config/ageup-mode | - | Switch all to ageup |
-| POST | /api/config/resume | - | Resume normal mode |
+**v2.0.0** (Current)
+- Complete UI rewrite: WinterHub-style sidebar
+- Schema: ps_pool, global_config, device_ps simplified
+- New settings endpoint (replaces config route)
+- Bulk-inject cookies (1:1 distribution)
+- Dashboard: stat cards + device cards
+- Private Servers: pool + distribute + distribution view
+- Cookies: device list + bulk paste + inject
+- Config: package, hop interval, endpoint PS, endpoint interval
+
+**v1.5.0**
+- Basic web backend + React MVP
+- Device register + cookie + PS link per device
+- Start/Stop/Inject commands
 
 ---
 
-## 8. Known Limitations
+## Support
 
-- Lua Ctrl+C stop belum 100% reliable di semua Termux build
-- Cookie inject bisa bikin input mati di versi lama (fixed v1.4.3 via temp file)
-- Polling interval 60 detik → command delay max 1 menit
-- Belum ada auth di backend → jangan expose ke internet tanpa VPN/tunnel
-- Database di-auto-create, backup manual jika perlu
+For issues:
+- Check MASTERPLAN.md (project roadmap)
+- Check API_NOTES.md (detailed API docs)
+- Review git log: `git log --oneline`
