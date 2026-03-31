@@ -13,6 +13,7 @@ local HOP_FILE       = "/sdcard/.hopper_hop"
 local PTR_FILE       = "/sdcard/.hopper_ptr"
 local DEVICE_ID_FILE = "/sdcard/.hopper_device_id"
 local SERVER_FILE    = "/sdcard/.hopper_server"
+local CONFIG_CACHE   = "/sdcard/.hopper_config_cache"  -- Cache for offline mode
 
 local RONIX_KEY_DIR  = "/storage/emulated/0/RonixExploit/internal/"
 local RONIX_KEY_PATH = RONIX_KEY_DIR .. "_key.txt"
@@ -148,6 +149,37 @@ local function fetch_account_info(cookie)
 end
 
 -- ============================================
+-- OFFLINE MODE CONFIG CACHE
+-- ============================================
+local function cache_config(hop_int, endpoint_ps, endpoint_int)
+    local cache = {
+        hop_interval = hop_int or HOP_MIN,
+        endpoint_ps = endpoint_ps or "",
+        endpoint_interval = endpoint_int or 30,
+        cached_at = os.time()
+    }
+    local json = '{"hop_interval":' .. cache.hop_interval
+              .. ',"endpoint_ps":"' .. (cache.endpoint_ps or ""):gsub('"','\"') .. '"'
+              .. ',"endpoint_interval":' .. cache.endpoint_interval .. '}'
+    save_file(CONFIG_CACHE, json)
+    log("CONFIG CACHE: saved hop=" .. cache.hop_interval
+        .. ", endpoint_int=" .. cache.endpoint_interval)
+end
+
+local function load_cached_config()
+    local json = read_file(CONFIG_CACHE)
+    if json == "" then return nil end
+    local hop = json_field(json, "hop_interval")
+    local endpoint_ps = json_field(json, "endpoint_ps")
+    local endpoint_int = json_field(json, "endpoint_interval")
+    return {
+        hop_interval = tonumber(hop) or 50,
+        endpoint_ps = endpoint_ps or "",
+        endpoint_interval = tonumber(endpoint_int) or 30
+    }
+end
+
+-- ============================================
 -- WEB BACKEND API
 -- ============================================
 local function http_get(url)
@@ -184,7 +216,7 @@ local function api_enabled()
 end
 
 local function api_register()
-    if not api_enabled() then return end
+    if not api_enabled() then return false end
     local name = DEVICE_ID
     local acct = read_file(ACCOUNT_FILE)
     if acct ~= "" then
@@ -192,22 +224,28 @@ local function api_register()
         if aname then name = DEVICE_ID .. " (" .. aname .. ")" end
     end
     local body = '{"id":"' .. DEVICE_ID .. '","name":"' .. name .. '","pkg_name":"' .. PKG .. '"}'
-    http_post(SERVER .. "/api/devices/register", body)
-    log("API: registered as " .. DEVICE_ID)
+    local result = http_post(SERVER .. "/api/devices/register", body)
+    if result ~= "" then
+        log("API: registered as " .. DEVICE_ID)
+        cache_config(HOP_MIN, "", 30)  -- Cache basic config
+        return true
+    end
+    return false
 end
 
 local function api_poll()
-    if not api_enabled() then return nil, nil end
+    if not api_enabled() then return nil, nil, true end  -- (cmd, body, is_offline)
     local body = http_get(SERVER .. "/api/devices/" .. DEVICE_ID .. "/command")
-    if body == "" then return nil, nil end
+    if body == "" then return nil, nil, true end  -- Backend down
     local cmd = json_field(body, "command")
-    return cmd, body
+    return cmd, body, false
 end
 
 local function api_status(status)
-    if not api_enabled() then return end
+    if not api_enabled() then return false end
     local body = '{"status":"' .. status .. '","hop_min":' .. HOP_MIN .. ',"pkg_name":"' .. PKG .. '"}'
-    http_post(SERVER .. "/api/devices/" .. DEVICE_ID .. "/status", body)
+    local result = http_post(SERVER .. "/api/devices/" .. DEVICE_ID .. "/status", body)
+    return result ~= ""  -- true if successful
 end
 
 local function handle_remote_command(cmd, body)
@@ -381,7 +419,7 @@ local function show_status(cur_ps, ps_total, crash_count,
                             runtime_m, hop_elapsed_m, status_str)
     cls()
     out("========================")
-    out("  HOPPER MONITOR v1.5 ")
+    out("  HOPPER MONITOR v1.6 ")
     out("========================")
     out("")
     out("Pkg    : " .. PKG)
@@ -402,6 +440,8 @@ local function show_status(cur_ps, ps_total, crash_count,
     out("")
     out("========================")
     out("[Ctrl+C] = STOP")
+    out("OFFLINE MODE: Hopper continues with")
+    out("cached settings when backend down")
     out("========================")
 end
 
@@ -442,6 +482,9 @@ local function run_hopper()
     local hop_time     = os.time()
     local last_display = 0
     local last_poll    = 0
+    local last_retry   = 0
+    local is_offline   = false
+    local offline_mode_hop_sec = HOP_MIN * 60  -- Default offline hop interval
 
     out("")
     inject_all_verbose()
@@ -478,16 +521,37 @@ local function run_hopper()
             local status_str    = running and "RUNNING" or "NOT RUNNING"
             local did_action    = false
 
-            -- Poll backend every 60 seconds
-            if now - last_poll >= 60 then
-                local cmd, body = api_poll()
-                handle_remote_command(cmd, body)
+            -- Poll backend every 60 seconds (or every 30s when offline for faster reconnect)
+            local poll_interval = is_offline and 30 or 60
+            if now - last_poll >= poll_interval then
+                local cmd, body, offline = api_poll()
+
+                if offline and not is_offline then
+                    -- Backend went down
+                    is_offline = true
+                    log("⚠️  OFFLINE MODE: Backend unreachable")
+                    local cached = load_cached_config()
+                    if cached then
+                        offline_mode_hop_sec = cached.hop_interval * 60
+                        log("OFFLINE: Using cached config (hop=" .. cached.hop_interval .. "m)")
+                    end
+                elseif not offline and is_offline then
+                    -- Backend came back online
+                    is_offline = false
+                    log("✓ ONLINE MODE: Backend reconnected")
+                    api_status(status_str == "RUNNING" and "running" or "idle")
+                elseif not offline then
+                    -- Normal online mode
+                    handle_remote_command(cmd, body)
+                end
+
                 last_poll = now
             end
 
-            -- Hop timer
-            if HOP_MIN > 0 and hop_elapsed_s >= hop_sec then
-                log("Hop -> PS " .. ptr)
+            -- Hop timer — use offline_mode_hop_sec when offline, hop_sec when online
+            local effective_hop_sec = is_offline and offline_mode_hop_sec or hop_sec
+            if HOP_MIN > 0 and hop_elapsed_s >= effective_hop_sec then
+                log("Hop -> PS " .. ptr .. (is_offline and " [OFFLINE]" or ""))
                 launch(ps_list[ptr], ptr, #ps_list)
                 cur_ps = ptr; ptr = ptr + 1
                 if ptr > #ps_list then ptr = 1 end
@@ -497,16 +561,19 @@ local function run_hopper()
             -- Crash watchdog — does NOT reset hop_time
             if not running and not did_action then
                 crash_count = crash_count + 1
-                log("Crash #" .. crash_count .. " relaunch PS " .. cur_ps)
+                log("Crash #" .. crash_count .. " relaunch PS " .. cur_ps .. (is_offline and " [OFFLINE]" or ""))
                 launch(ps_list[cur_ps], cur_ps, #ps_list)
             end
 
             -- Update display every 15 seconds
             if now - last_display >= 15 then
+                local mode_str = is_offline and "OFFLINE" or "ONLINE"
                 show_status(cur_ps, #ps_list, crash_count,
-                            runtime_m, hop_elapsed_m, status_str)
-                -- Also report status to backend
-                api_status(status_str == "RUNNING" and "running" or "idle")
+                            runtime_m, hop_elapsed_m, status_str .. " [" .. mode_str .. "]")
+                -- Also report status to backend (only if online)
+                if not is_offline then
+                    api_status(status_str == "RUNNING" and "running" or "idle")
+                end
                 last_display = now
             end
         end
@@ -521,7 +588,9 @@ local function run_hopper()
     log("Saved PS pointer: " .. cur_ps)
 
     os.remove(STOP_FILE)
-    api_status("idle")
+    if not is_offline then
+        api_status("idle")
+    end
     log("=== Hopper Stopped ===")
 
     cls()
@@ -532,6 +601,9 @@ local function run_hopper()
     out("Last PS : " .. cur_ps .. " / " .. #ps_list)
     out("Crashes : " .. crash_count)
     out("Resume  : will start from PS " .. cur_ps)
+    if is_offline then
+        out("[!] Stopped in OFFLINE mode")
+    end
     out("")
 end
 
