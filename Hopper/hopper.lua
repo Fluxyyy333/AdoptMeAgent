@@ -1,21 +1,19 @@
--- Simple PS Hopper v1.6.2
--- v1.4.x: standalone Termux hopper with menu, cookie inject, PS management
--- v1.5:   Web backend integration — register, poll commands, report status
--- v1.6:   Offline mode, auto-detect backend down, cache config locally
--- v1.6.2: Support ngrok/HTTPS URLs in menu option 8
+-- Simple PS Hopper v1.7 STANDALONE
+-- Base: v1.4.2 (fully working, zero dependencies, no backend)
+-- v1.7: Pure standalone — no web backend, no ngrok, no API polling
+--       Just local menu + auto hopping. Works offline forever.
+-- Config: Package, cookie, PS links, hop interval (all local files)
+-- Menu: Setup config, then auto-start hopping. Ctrl+C to stop.
 -- ============================================
 
-local HOPPER_LOG     = "/sdcard/hopper_log.txt"
-local PS_FILE        = "/sdcard/private_servers.txt"
-local PKG_FILE       = "/sdcard/.hopper_pkg"
-local COOKIE_FILE    = "/sdcard/.hopper_cookie"
-local STOP_FILE      = "/sdcard/.hopper_stop"
-local ACCOUNT_FILE   = "/sdcard/.hopper_account"
-local HOP_FILE       = "/sdcard/.hopper_hop"
-local PTR_FILE       = "/sdcard/.hopper_ptr"
-local DEVICE_ID_FILE = "/sdcard/.hopper_device_id"
-local SERVER_FILE    = "/sdcard/.hopper_server"
-local CONFIG_CACHE   = "/sdcard/.hopper_config_cache"  -- Cache for offline mode
+local HOPPER_LOG   = "/sdcard/hopper_log.txt"
+local PS_FILE      = "/sdcard/private_servers.txt"
+local PKG_FILE     = "/sdcard/.hopper_pkg"
+local COOKIE_FILE  = "/sdcard/.hopper_cookie"
+local STOP_FILE    = "/sdcard/.hopper_stop"
+local ACCOUNT_FILE = "/sdcard/.hopper_account"
+local HOP_FILE     = "/sdcard/.hopper_hop"
+local PTR_FILE     = "/sdcard/.hopper_ptr"
 
 local RONIX_KEY_DIR  = "/storage/emulated/0/RonixExploit/internal/"
 local RONIX_KEY_PATH = RONIX_KEY_DIR .. "_key.txt"
@@ -29,28 +27,14 @@ loadstring(game:HttpGet("https://zekehub.com/scripts/AdoptMe/Utility.lua"))()]]
 local RONIX_TRACK_PATH   = RONIX_AE_DIR .. "Trackstat.lua"
 local RONIX_TRACK_SCRIPT = '_G.Config={UserID="37825915-c3be-41bc-987f-661da09d9b3c",discord_id="757533465213141053",Note="Pc"}local s;for i=1,5 do s=pcall(function()loadstring(game:HttpGet("https://cdn.yummydata.click/scripts/adoptmee"))()end)if s then break end wait(5)end'
 
-local PKG       = ""
-local HOP_MIN   = 0
-local DEVICE_ID = ""
-local SERVER    = ""
+local PKG     = ""
+local HOP_MIN = 0
 
 -- ============================================
 -- HELPERS
 -- ============================================
 local function sleep(s)
     if s and s > 0 then os.execute("sleep " .. tostring(s)) end
-end
-
--- Returns true if interrupted by Ctrl+C
--- Compatible with Lua 5.1 (returns number) and 5.3+ (returns bool, string, code)
-local function isleep(s)
-    if not s or s <= 0 then return false end
-    local r1, r2 = os.execute("sleep " .. tostring(s))
-    -- Lua 5.3+: r2 is "exit" or "signal"
-    if r2 == "signal" then return true end
-    -- Lua 5.1: r1 is exit status number, r2 is nil; non-zero = interrupted
-    if r2 == nil and type(r1) == "number" and r1 ~= 0 then return true end
-    return false
 end
 
 local function su_exec(cmd)
@@ -135,148 +119,15 @@ local function json_field(json_str, field)
 end
 
 local function fetch_account_info(cookie)
-    local tmp = "/sdcard/.hopper_acct.tmp"
-    os.execute('curl -s --connect-timeout 5 '
+    local h = io.popen('curl -s --connect-timeout 5 '
         .. '-H "Cookie: .ROBLOSECURITY=' .. cookie .. '" '
-        .. '"https://users.roblox.com/v1/users/authenticated" '
-        .. '> "' .. tmp .. '" 2>/dev/null')
-    local f = io.open(tmp, "r")
-    if not f then return nil, nil end
-    local body = f:read("*a") or ""
-    f:close()
-    os.remove(tmp)
+        .. '"https://users.roblox.com/v1/users/authenticated" 2>/dev/null')
+    if not h then return nil, nil end
+    local body = h:read("*a") or ""
+    h:close()
     local name = json_field(body, "name")
     local id   = json_field(body, "id")
     return name, id
-end
-
--- ============================================
--- OFFLINE MODE CONFIG CACHE
--- ============================================
-local function cache_config(hop_int, endpoint_ps, endpoint_int)
-    local cache = {
-        hop_interval = hop_int or HOP_MIN,
-        endpoint_ps = endpoint_ps or "",
-        endpoint_interval = endpoint_int or 30,
-        cached_at = os.time()
-    }
-    local json = '{"hop_interval":' .. cache.hop_interval
-              .. ',"endpoint_ps":"' .. (cache.endpoint_ps or ""):gsub('"','\"') .. '"'
-              .. ',"endpoint_interval":' .. cache.endpoint_interval .. '}'
-    save_file(CONFIG_CACHE, json)
-    log("CONFIG CACHE: saved hop=" .. cache.hop_interval
-        .. ", endpoint_int=" .. cache.endpoint_interval)
-end
-
-local function load_cached_config()
-    local json = read_file(CONFIG_CACHE)
-    if json == "" then return nil end
-    local hop = json_field(json, "hop_interval")
-    local endpoint_ps = json_field(json, "endpoint_ps")
-    local endpoint_int = json_field(json, "endpoint_interval")
-    return {
-        hop_interval = tonumber(hop) or 50,
-        endpoint_ps = endpoint_ps or "",
-        endpoint_interval = tonumber(endpoint_int) or 30
-    }
-end
-
--- ============================================
--- WEB BACKEND API
--- ============================================
-local function http_get(url)
-    local tmp = "/sdcard/.hopper_http.tmp"
-    os.execute('curl -s --connect-timeout 5 "' .. url .. '" > "' .. tmp .. '" 2>/dev/null')
-    local f = io.open(tmp, "r")
-    if not f then return "" end
-    local body = f:read("*a") or ""
-    f:close()
-    os.remove(tmp)
-    return body
-end
-
-local function http_post(url, json_body)
-    local tmp = "/sdcard/.hopper_http.tmp"
-    local data_tmp = "/sdcard/.hopper_post.tmp"
-    local df = io.open(data_tmp, "w")
-    if df then df:write(json_body); df:close() end
-    os.execute('curl -s --connect-timeout 5 -X POST '
-        .. '-H "Content-Type: application/json" '
-        .. '-d @"' .. data_tmp .. '" '
-        .. '"' .. url .. '" > "' .. tmp .. '" 2>/dev/null')
-    os.remove(data_tmp)
-    local f = io.open(tmp, "r")
-    if not f then return "" end
-    local body = f:read("*a") or ""
-    f:close()
-    os.remove(tmp)
-    return body
-end
-
-local function api_enabled()
-    return SERVER ~= "" and DEVICE_ID ~= ""
-end
-
-local function api_register()
-    if not api_enabled() then return false end
-    local name = DEVICE_ID
-    local acct = read_file(ACCOUNT_FILE)
-    if acct ~= "" then
-        local aname = acct:match("^(.+):%d+$")
-        if aname then name = DEVICE_ID .. " (" .. aname .. ")" end
-    end
-    local body = '{"id":"' .. DEVICE_ID .. '","name":"' .. name .. '","pkg_name":"' .. PKG .. '"}'
-    local result = http_post(SERVER .. "/api/devices/register", body)
-    if result ~= "" then
-        log("API: registered as " .. DEVICE_ID)
-        cache_config(HOP_MIN, "", 30)  -- Cache basic config
-        return true
-    end
-    return false
-end
-
-local function api_poll()
-    if not api_enabled() then return nil, nil, true end  -- (cmd, body, is_offline)
-    local body = http_get(SERVER .. "/api/devices/" .. DEVICE_ID .. "/command")
-    if body == "" then return nil, nil, true end  -- Backend down
-    local cmd = json_field(body, "command")
-    return cmd, body, false
-end
-
-local function api_status(status)
-    if not api_enabled() then return false end
-    local body = '{"status":"' .. status .. '","hop_min":' .. HOP_MIN .. ',"pkg_name":"' .. PKG .. '"}'
-    local result = http_post(SERVER .. "/api/devices/" .. DEVICE_ID .. "/status", body)
-    return result ~= ""  -- true if successful
-end
-
-local function handle_remote_command(cmd, body)
-    if not cmd or cmd == "none" then return false end
-    log("API cmd: " .. cmd)
-
-    if cmd == "stop" then
-        save_file(STOP_FILE, "stop")
-    elseif cmd == "start" then
-        -- Will be handled by menu loop if idle; no-op if already running
-        return true
-    elseif cmd == "inject_cookie" then
-        local cookie = json_field(body, "cookie")
-        if cookie and cookie ~= "" then
-            save_file(COOKIE_FILE, cookie)
-            os.execute("chmod 600 '" .. COOKIE_FILE .. "'")
-        end
-        inject_cookie()
-    elseif cmd == "inject_all" then
-        inject_cookie()
-        inject_key()
-        inject_autoexec()
-        inject_trackstat()
-    elseif cmd == "set_mode" then
-        local mode = json_field(body, "mode")
-        if mode then log("Mode set: " .. mode) end
-    end
-
-    return false
 end
 
 -- ============================================
@@ -284,11 +135,10 @@ end
 -- ============================================
 local function is_running()
     if PKG == "" then return false end
-    local tmp = "/sdcard/.hopper_pid.tmp"
-    os.execute("su -c 'pidof " .. PKG .. "' > '" .. tmp .. "' 2>/dev/null")
-    local pid = read_file(tmp)
-    os.remove(tmp)
-    return pid:match("%d+") ~= nil
+    local h = io.popen("su -c 'pidof " .. PKG .. "' 2>/dev/null")
+    if not h then return false end
+    local r = h:read("*a") or ""; h:close()
+    return r:match("%d+") ~= nil
 end
 
 local function inject_cookie()
@@ -298,12 +148,9 @@ local function inject_cookie()
     local target = dir .. "/RobloxSharedPreferences.xml"
     local tmp    = "/sdcard/.hcookie_tmp.xml"
 
-    local xml_tmp = "/sdcard/.hopper_xmlread.tmp"
-    os.execute("su -c 'cat \"" .. target .. "\"' > '" .. xml_tmp .. "' 2>/dev/null")
-    local xf = io.open(xml_tmp, "r")
-    local existing = xf and xf:read("*a") or ""
-    if xf then xf:close() end
-    os.remove(xml_tmp)
+    local xh = io.popen("su -c 'cat \"" .. target .. "\"' 2>/dev/null")
+    local existing = xh and xh:read("*a") or ""
+    if xh then xh:close() end
 
     local xml_content
     if existing ~= "" and existing:find("ROBLOSECURITY") then
@@ -344,10 +191,10 @@ local function inject_cookie()
     su_exec("mkdir -p '" .. dir .. "'")
     su_exec("cp '" .. tmp .. "' '" .. target .. "'")
 
-    local uid_tmp = "/sdcard/.hopper_uid.tmp"
-    os.execute("su -c 'stat -c %u /data/data/" .. PKG .. "' > '" .. uid_tmp .. "' 2>/dev/null")
-    local uid = read_file(uid_tmp)
-    os.remove(uid_tmp)
+    local uid_h = io.popen("su -c 'stat -c %u /data/data/" .. PKG .. "' 2>/dev/null")
+    local uid = uid_h and uid_h:read("*l") or ""
+    if uid_h then uid_h:close() end
+    uid = uid:gsub("%c",""):gsub("%s","")
     if uid ~= "" then
         su_exec("chown " .. uid .. ":" .. uid .. " '" .. target .. "'")
     end
@@ -421,7 +268,7 @@ local function show_status(cur_ps, ps_total, crash_count,
                             runtime_m, hop_elapsed_m, status_str)
     cls()
     out("========================")
-    out("  HOPPER MONITOR v1.6 ")
+    out("  HOPPER MONITOR v1.7 ")
     out("========================")
     out("")
     out("Pkg    : " .. PKG)
@@ -442,8 +289,6 @@ local function show_status(cur_ps, ps_total, crash_count,
     out("")
     out("========================")
     out("[Ctrl+C] = STOP")
-    out("OFFLINE MODE: Hopper continues with")
-    out("cached settings when backend down")
     out("========================")
 end
 
@@ -477,16 +322,12 @@ local function run_hopper()
     end
     os.remove(PTR_FILE)
 
-    local cur_ps       = ptr
-    local crash_count  = 0
-    local hop_sec      = HOP_MIN * 60
-    local start_time   = os.time()
-    local hop_time     = os.time()
+    local cur_ps      = ptr
+    local crash_count = 0
+    local hop_sec     = HOP_MIN * 60
+    local start_time  = os.time()
+    local hop_time    = os.time()
     local last_display = 0
-    local last_poll    = 0
-    local last_retry   = 0
-    local is_offline   = false
-    local offline_mode_hop_sec = HOP_MIN * 60  -- Default offline hop interval
 
     out("")
     inject_all_verbose()
@@ -497,18 +338,13 @@ local function run_hopper()
     ptr = ptr + 1
     if ptr > #ps_list then ptr = 1 end
 
-    api_status("running")
-
     out("")
     out("[*] Hopper running... Ctrl+C to stop")
     sleep(3)
 
     local ok, err = pcall(function()
         while true do
-            if isleep(5) then
-                log("Ctrl+C detected")
-                return
-            end
+            sleep(5)
 
             if file_exists(STOP_FILE) then
                 log("Stop file detected")
@@ -523,59 +359,26 @@ local function run_hopper()
             local status_str    = running and "RUNNING" or "NOT RUNNING"
             local did_action    = false
 
-            -- Poll backend every 60 seconds (or every 30s when offline for faster reconnect)
-            local poll_interval = is_offline and 30 or 60
-            if now - last_poll >= poll_interval then
-                local cmd, body, offline = api_poll()
-
-                if offline and not is_offline then
-                    -- Backend went down
-                    is_offline = true
-                    log("⚠️  OFFLINE MODE: Backend unreachable")
-                    local cached = load_cached_config()
-                    if cached then
-                        offline_mode_hop_sec = cached.hop_interval * 60
-                        log("OFFLINE: Using cached config (hop=" .. cached.hop_interval .. "m)")
-                    end
-                elseif not offline and is_offline then
-                    -- Backend came back online
-                    is_offline = false
-                    log("✓ ONLINE MODE: Backend reconnected")
-                    api_status(status_str == "RUNNING" and "running" or "idle")
-                elseif not offline then
-                    -- Normal online mode
-                    handle_remote_command(cmd, body)
-                end
-
-                last_poll = now
-            end
-
-            -- Hop timer — use offline_mode_hop_sec when offline, hop_sec when online
-            local effective_hop_sec = is_offline and offline_mode_hop_sec or hop_sec
-            if HOP_MIN > 0 and hop_elapsed_s >= effective_hop_sec then
-                log("Hop -> PS " .. ptr .. (is_offline and " [OFFLINE]" or ""))
+            -- Hop timer
+            if HOP_MIN > 0 and hop_elapsed_s >= hop_sec then
+                log("Hop -> PS " .. ptr)
                 launch(ps_list[ptr], ptr, #ps_list)
                 cur_ps = ptr; ptr = ptr + 1
                 if ptr > #ps_list then ptr = 1 end
                 hop_time = os.time(); hop_elapsed_m = 0; did_action = true
             end
 
-            -- Crash watchdog — does NOT reset hop_time
+            -- PATCH 3: Crash watchdog — does NOT reset hop_time
             if not running and not did_action then
                 crash_count = crash_count + 1
-                log("Crash #" .. crash_count .. " relaunch PS " .. cur_ps .. (is_offline and " [OFFLINE]" or ""))
+                log("Crash #" .. crash_count .. " relaunch PS " .. cur_ps)
                 launch(ps_list[cur_ps], cur_ps, #ps_list)
             end
 
             -- Update display every 15 seconds
             if now - last_display >= 15 then
-                local mode_str = is_offline and "OFFLINE" or "ONLINE"
                 show_status(cur_ps, #ps_list, crash_count,
-                            runtime_m, hop_elapsed_m, status_str .. " [" .. mode_str .. "]")
-                -- Also report status to backend (only if online)
-                if not is_offline then
-                    api_status(status_str == "RUNNING" and "running" or "idle")
-                end
+                            runtime_m, hop_elapsed_m, status_str)
                 last_display = now
             end
         end
@@ -590,9 +393,6 @@ local function run_hopper()
     log("Saved PS pointer: " .. cur_ps)
 
     os.remove(STOP_FILE)
-    if not is_offline then
-        api_status("idle")
-    end
     log("=== Hopper Stopped ===")
 
     cls()
@@ -603,9 +403,6 @@ local function run_hopper()
     out("Last PS : " .. cur_ps .. " / " .. #ps_list)
     out("Crashes : " .. crash_count)
     out("Resume  : will start from PS " .. cur_ps)
-    if is_offline then
-        out("[!] Stopped in OFFLINE mode")
-    end
     out("")
 end
 
@@ -619,12 +416,10 @@ local function menu_set_package()
     local saved = read_file(PKG_FILE)
     if saved ~= "" then out("Tersimpan: " .. saved); out("") end
 
-    local pkg_tmp = "/sdcard/.hopper_pkglist.tmp"
-    os.execute("pm list packages > '" .. pkg_tmp .. "' 2>/dev/null")
+    local h = io.popen("pm list packages 2>/dev/null")
     local pkgs = {}
-    local pf = io.open(pkg_tmp, "r")
-    if pf then
-        local r = pf:read("*a") or ""; pf:close()
+    if h then
+        local r = h:read("*a") or ""; h:close()
         for line in r:gmatch("[^\r\n]+") do
             local p = line:match("package:(.+)")
             if p then
@@ -634,7 +429,6 @@ local function menu_set_package()
         end
         table.sort(pkgs)
     end
-    os.remove(pkg_tmp)
 
     if #pkgs > 0 then
         out("Package tersedia:")
@@ -781,94 +575,19 @@ local function menu_set_hop()
     sleep(1)
 end
 
-local function menu_set_ip()
-    cls()
-    out("=== SET PC IP ADDRESS ===")
-    out("")
-    out("Contoh:")
-    out("  - IP lokal: 192.168.1.100")
-    out("  - Ngrok URL: https://abdul-mediaeval-chan.ngrok-free.dev")
-    out("  - Full URL: http://192.168.1.100:3000")
-    out("")
-    if SERVER ~= "" then
-        local ip_only = SERVER:match("//(.+):") or SERVER
-        out("Saat ini: " .. ip_only)
-        out("")
-    end
-    local inp = ask("IP / URL (kosong=batal)")
-    if inp == "" then return end
-
-    -- If input contains "://", use as-is (full URL)
-    if inp:match("://") then
-        SERVER = inp:gsub("/$", "")  -- Remove trailing slash
-    -- If input contains ".", assume it's an IP and wrap it
-    elseif inp:match("%d+%.%d+%.%d+%.%d+") then
-        SERVER = "http://" .. inp .. ":3000"
-    -- Otherwise, assume it's a domain, wrap with https://
-    else
-        SERVER = "https://" .. inp
-    end
-
-    save_file(SERVER_FILE, SERVER)
-    out("[+] Server URL: " .. SERVER)
-    sleep(1)
-end
-
-local function menu_set_server()
-    cls()
-    out("=== SET SERVER URL ===")
-    out("")
-    if SERVER ~= "" then out("Saat ini: " .. SERVER); out("") end
-    out("Contoh: http://192.168.1.100:3000")
-    out("")
-    local inp = ask("URL (kosong=batal)")
-    if inp == "" then return end
-    SERVER = inp:gsub("/$", "")
-    save_file(SERVER_FILE, SERVER)
-    out("[+] Server: " .. SERVER)
-    sleep(1)
-end
-
-local function menu_set_device_id()
-    cls()
-    out("=== SET DEVICE ID ===")
-    out("")
-    if DEVICE_ID ~= "" then out("Saat ini: " .. DEVICE_ID); out("") end
-    out("ID unik untuk device ini (misal: rf-01)")
-    out("")
-    local inp = ask("Device ID (kosong=batal)")
-    if inp == "" then return end
-    DEVICE_ID = inp
-    save_file(DEVICE_ID_FILE, DEVICE_ID)
-    out("[+] Device ID: " .. DEVICE_ID)
-
-    -- Auto register if server configured
-    if SERVER ~= "" then
-        out("[*] Registering with backend...")
-        api_register()
-        out("[+] Registered.")
-    end
-    sleep(1)
-end
-
 -- ============================================
 -- MAIN MENU
 -- ============================================
 local function main()
     PKG = read_file(PKG_FILE)
-    DEVICE_ID = read_file(DEVICE_ID_FILE)
-    SERVER    = read_file(SERVER_FILE)
 
     local hop_saved = read_file(HOP_FILE)
     local hop_val = tonumber(hop_saved)
     if hop_val and hop_val >= 0 then HOP_MIN = hop_val end
 
-    -- Auto register on startup
-    api_register()
-
     while true do
         cls()
-        out("=== HOPPER v1.6.2 ===")
+        out("=== SIMPLE HOPPER v1.4.2 ===")
         out("")
         local cookie = read_file(COOKIE_FILE)
         local ps     = load_ps()
@@ -891,13 +610,6 @@ local function main()
 
         out("PS      : " .. #ps)
         out("Hop     : " .. (HOP_MIN == 0 and "OFF" or HOP_MIN.."m"))
-        if SERVER ~= "" then
-            local ip_only = SERVER:match("//(.+):") or SERVER
-            out("IP/URL  : " .. ip_only)
-        else
-            out("IP/URL  : -")
-        end
-        out("Device  : " .. (DEVICE_ID ~= "" and DEVICE_ID or "-"))
 
         -- Show resume info if available
         local saved_ptr = read_file(PTR_FILE)
@@ -911,9 +623,6 @@ local function main()
         out("3. Kelola PS links")
         out("4. Set hop interval")
         out("5. START")
-        out("6. Set server URL (advanced)")
-        out("7. Set device ID")
-        out("8. Set PC IP address (quick setup)")
         out("0. Keluar")
         out("")
         local ch = ask("Pilih")
@@ -922,9 +631,6 @@ local function main()
         elseif ch == "3" then menu_set_ps()
         elseif ch == "4" then menu_set_hop()
         elseif ch == "5" then run_hopper()
-        elseif ch == "6" then menu_set_server()
-        elseif ch == "7" then menu_set_device_id()
-        elseif ch == "8" then menu_set_ip()
         elseif ch == "0" then cls(); out("Keluar."); break
         end
     end
