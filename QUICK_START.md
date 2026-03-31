@@ -22,34 +22,48 @@ Open browser: **`http://localhost:5173`**
 
 ## Setup RF (Redfinger) — First Time
 
-### Step 1: Cari IP PC
-```bash
-# Windows CMD
-ipconfig
-# Catat IPv4 Address, e.g., 192.168.1.100
-```
+**Detailed guide:** See [RF_SETUP.md](RF_SETUP.md) for complete setup with mkdir, curl, package install
 
-### Step 2: Update Lua Script (RF Termux)
-```bash
-cd ~/hopper
-nano hopper.lua
-# Edit baris ~10:
-# local BACKEND = "http://192.168.1.100:3000"  ← ganti IP PC
-# Save: Ctrl+O → Enter → Ctrl+X
-```
+### Quick: Jalankan Hopper (RF Termux)
 
-### Step 3: Jalankan Hopper (RF Termux)
 ```bash
+cd /sdcard/hopper
 lua hopper.lua
-# Menu akan muncul, pilih:
-# 1 = Set package (pilih com.roblox.client)
-# 2 = Set cookie (paste .ROBLOSECURITY)
-# 3 = Kelola PS links (paste PS links)
-# 4 = Set hop interval (e.g., 50 menit)
-# 6 = Set server URL (sudah ke http://192.168.1.100:3000)
-# 7 = Set device ID (e.g., rf-01)
-# 5 = START
 ```
+
+Menu akan muncul. **Isi langsung dari menu (v1.6.1+):**
+
+```
+1. Set package           → com.roblox.client
+2. Set cookie           → paste .ROBLOSECURITY
+3. Kelola PS links      → paste PS links
+4. Set hop interval     → e.g., 50 menit
+8. Set PC IP address    → e.g., 192.168.1.100 (NEW!)
+7. Set device ID        → e.g., rf-01
+5. START
+```
+
+**No nano editing needed!** Semua dari menu interaktif.
+
+---
+
+### IP Address Setup (New in v1.6.1)
+
+1. **Cari IP PC:**
+   ```bash
+   # Windows CMD
+   ipconfig
+   # Catat IPv4 Address, e.g., 192.168.1.100
+   ```
+
+2. **Set di hopper menu (option 8):**
+   ```
+   Pilih > 8
+   IP address (contoh: 192.168.1.100) > 192.168.1.100
+   [+] Server URL: http://192.168.1.100:3000
+   ```
+
+Done! Tidak perlu nano lagi.
 
 ---
 
