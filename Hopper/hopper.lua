@@ -779,6 +779,36 @@ local function menu_set_hop()
     sleep(1)
 end
 
+local function menu_set_ip()
+    cls()
+    out("=== SET PC IP ADDRESS ===")
+    out("")
+    out("Cari IP PC di Windows:")
+    out("  1. Buka CMD")
+    out("  2. Ketik: ipconfig")
+    out("  3. Lihat IPv4 Address (misal: 192.168.1.100)")
+    out("")
+    if SERVER ~= "" then
+        local ip_only = SERVER:match("//(.+):") or SERVER
+        out("IP saat ini: " .. ip_only)
+        out("")
+    end
+    local inp = ask("IP address (contoh: 192.168.1.100)")
+    if inp == "" then return end
+
+    -- Validate basic IP format
+    if not inp:match("%d+%.%d+%.%d+%.%d+") then
+        out("[!] Format IP tidak valid")
+        sleep(1)
+        return
+    end
+
+    SERVER = "http://" .. inp .. ":3000"
+    save_file(SERVER_FILE, SERVER)
+    out("[+] Server URL: " .. SERVER)
+    sleep(1)
+end
+
 local function menu_set_server()
     cls()
     out("=== SET SERVER URL ===")
@@ -856,7 +886,12 @@ local function main()
 
         out("PS      : " .. #ps)
         out("Hop     : " .. (HOP_MIN == 0 and "OFF" or HOP_MIN.."m"))
-        out("Server  : " .. (SERVER ~= "" and SERVER or "-"))
+        if SERVER ~= "" then
+            local ip_only = SERVER:match("//(.+):") or SERVER
+            out("IP/URL  : " .. ip_only)
+        else
+            out("IP/URL  : -")
+        end
         out("Device  : " .. (DEVICE_ID ~= "" and DEVICE_ID or "-"))
 
         -- Show resume info if available
@@ -871,8 +906,9 @@ local function main()
         out("3. Kelola PS links")
         out("4. Set hop interval")
         out("5. START")
-        out("6. Set server URL")
+        out("6. Set server URL (advanced)")
         out("7. Set device ID")
+        out("8. Set PC IP address (quick setup)")
         out("0. Keluar")
         out("")
         local ch = ask("Pilih")
@@ -883,6 +919,7 @@ local function main()
         elseif ch == "5" then run_hopper()
         elseif ch == "6" then menu_set_server()
         elseif ch == "7" then menu_set_device_id()
+        elseif ch == "8" then menu_set_ip()
         elseif ch == "0" then cls(); out("Keluar."); break
         end
     end
